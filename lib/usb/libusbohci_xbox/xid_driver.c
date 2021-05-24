@@ -1,4 +1,3 @@
-
 //Copyright 2020, Ryan Wendland
 //SPDX-License-Identifier: MIT
 
@@ -103,16 +102,27 @@ static int xid_probe(IFACE_T *iface) {
     //Get the XID descriptor to find out what type:
     xid_descriptor *xid_desc = (xid_descriptor *)usbh_alloc_mem(sizeof(xid_descriptor));
     uint32_t xfer_len;
-    usbh_ctrl_xfer(iface->udev,
-                   0xC1,                   //bmRequestType
-                   0x06,                   //bRequest
-                   0x4200,                 //wValue
-                   iface->if_num,          //wIndex
-                   sizeof(xid_descriptor), //wLength
-                   (uint8_t *)xid_desc, &xfer_len, 100);
+    int32_t ret = usbh_ctrl_xfer(iface->udev,
+                                 0xC1,                   //bmRequestType
+                                 0x06,                   //bRequest
+                                 0x4200,                 //wValue
+                                 iface->if_num,          //wIndex
+                                 sizeof(xid_descriptor), //wLength
+                                 (uint8_t *)xid_desc, &xfer_len, 100);
 
-    //Populate the xid device struct. FIXME. What is ctrl xfer fails
+    //Populate the xid device struct.
+    if (ret != USBH_OK)
+    {
+        //Controller didn't respond to control transfer. Likely some unusual 3rd party device.
+        //Exit for now.
+        USBH_XID_DEBUG("Error: XID did not have xid descriptor.\n";
+        usbh_free_mem(xid_desc, sizeof(xid_descriptor));
+        free_xid_device(xid);
+        return USBH_ERR_NOT_MATCHED;
+    }
+
     memcpy(&xid->xid_desc, xid_desc, sizeof(xid_descriptor));
+
     xid->iface = iface;
     xid->idVendor = udev->descriptor.idVendor;
     xid->idProduct = udev->descriptor.idProduct;
@@ -133,9 +143,11 @@ static int xid_probe(IFACE_T *iface) {
                xid->xid_desc.bSubType);
 
     if (xid_conn_func)
+    {
         xid_conn_func(xid, 0);
+    }
 
-    return 0;
+    return USBH_OK;
 }
 
 static void xid_disconnect(IFACE_T *iface) {
@@ -148,7 +160,6 @@ static void xid_disconnect(IFACE_T *iface) {
     {
         iface->udev->hc_driver->quit_xfer(NULL, &(iface->aif->ep[i]));
     }
-    
 
     //Free any running UTRs
     for (int i = 0; i < XID_MAX_TRANSFER_QUEUE; i++)
@@ -175,10 +186,10 @@ static void xid_disconnect(IFACE_T *iface) {
 
 UDEV_DRV_T xid_driver =
 {
-        xid_probe,
-        xid_disconnect,
-        NULL, //suspend
-        NULL, //resume
+    xid_probe,
+    xid_disconnect,
+    NULL, //suspend
+    NULL, //resume
 };
 
 /**
@@ -212,6 +223,7 @@ xid_dev_t *usbh_xid_get_device_list(void) {
 static int32_t queue_int_xfer(xid_dev_t *xid_dev, uint8_t dir, uint8_t ep_addr, uint8_t *buff, uint32_t len, void *callback) {
     IFACE_T *iface = (IFACE_T *)xid_dev->iface;
     UTR_T *utr = NULL;
+    int ret, i, free_slot;
 
     if (iface == NULL || iface->udev == NULL)
     {
@@ -219,18 +231,18 @@ static int32_t queue_int_xfer(xid_dev_t *xid_dev, uint8_t dir, uint8_t ep_addr, 
     }
 
     EP_INFO_T *ep = usbh_iface_find_ep(iface, ep_addr, dir | EP_ATTR_TT_INT);
-
     if (ep == NULL)
     {
         return USBH_ERR_EP_NOT_FOUND;
     }
 
     //Clean up finished UTRs in the queue
-    for (int i = 0; i < XID_MAX_TRANSFER_QUEUE; i++)
+    for (i = 0; i < XID_MAX_TRANSFER_QUEUE; i++)
     {
         utr = xid_dev->utr_list[i];
         if (utr != NULL && utr->ep != NULL && utr->ep->bEndpointAddress == ep->bEndpointAddress)
         {
+            //Don't queue multiple reads. User is calling faster than controller can update so has no benefit.
             if (dir == EP_ADDR_DIR_IN && utr->bIsTransferDone == 0)
             {
                 return HID_RET_XFER_IS_RUNNING;
@@ -246,8 +258,8 @@ static int32_t queue_int_xfer(xid_dev_t *xid_dev, uint8_t dir, uint8_t ep_addr, 
     }
 
     //Find a free slot in the queue
-    int free_slot = USBH_ERR_MEMORY_OUT;
-    for (int i = 0; i < XID_MAX_TRANSFER_QUEUE; i++)
+    free_slot = USBH_ERR_MEMORY_OUT;
+    for (i = 0; i < XID_MAX_TRANSFER_QUEUE; i++)
     {
         if (xid_dev->utr_list[i] == NULL)
         {
@@ -285,7 +297,7 @@ static int32_t queue_int_xfer(xid_dev_t *xid_dev, uint8_t dir, uint8_t ep_addr, 
         memcpy(utr->buff, buff, utr->data_len);
     }
 
-    int ret = usbh_int_xfer(utr);
+    ret = usbh_int_xfer(utr);
     if (ret != USBH_OK)
     {
         usbh_free_mem(utr->buff, ep->wMaxPacketSize);
