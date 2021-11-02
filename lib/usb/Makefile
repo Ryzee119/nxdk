@@ -13,7 +13,8 @@ USBH_OBJS = $(addsuffix .obj, $(basename $(USB_CORE_SRCS)))
 # Xbox specific files
 USB_XBOX_SRCS := \
 	$(USBH_DIR)/libusbohci_xbox/usbh_xbox.c \
-	$(USBH_DIR)/libusbohci_xbox/xid_driver.c
+	$(USBH_DIR)/libusbohci_xbox/xid_driver.c \
+	$(USBH_DIR)/libusbohci_xbox/xblc_driver.c
 
 USBH_OBJS += $(addsuffix .obj, $(basename $(USB_XBOX_SRCS)))
 
