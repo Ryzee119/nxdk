@@ -34,3 +34,6 @@
 [submodule "lib/usb/libusbohci"]
 	path = lib/usb/libusbohci
 	url = https://github.com/XboxDev/libusbohci.git
+[submodule "samples/usb_tusb/tinyusb_src"]
+	path = samples/usb_tusb/tinyusb_src
+	url = https://github.com/hathach/tinyusb_src.git
