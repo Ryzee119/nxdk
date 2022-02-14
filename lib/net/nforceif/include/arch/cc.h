@@ -50,6 +50,8 @@ void abort(void);
 #define BYTE_ORDER LITTLE_ENDIAN
 //#endif /* BYTE_ORDER */
 
+typedef int sys_prot_t;
+
 /* Define generic types used in lwIP */
 typedef unsigned   char    u8_t;
 typedef signed     char    s8_t;
@@ -57,6 +59,72 @@ typedef unsigned   short   u16_t;
 typedef signed     short   s16_t;
 typedef unsigned   int     u32_t;
 typedef signed     int     s32_t;
+
+//FIXME: Stub how win32 crypto functions
+#define HCRYPTPROV HANDLE
+#define PROV_RSA_FULL 0
+#define CRYPT_NEWKEYSET 0
+static inline BOOL CryptAcquireContext(HCRYPTPROV *phProv, LPCSTR szContainer, LPCSTR szProvider, DWORD dwProvType, DWORD dwFlags)
+{
+  return TRUE;
+}
+
+static inline BOOL CryptGenRandom(HCRYPTPROV hProv, DWORD dwLen, BYTE *pbBuffer)
+{
+  *pbBuffer = (u32_t)GetTickCount();
+  return TRUE;
+}
+
+// FIXME: Stub control win32 stuff
+#define MOUSE_EVENT_RECORD PVOID
+#define MENU_EVENT_RECORD PVOID
+#define WINDOW_BUFFER_SIZE_RECORD PVOID
+#define FOCUS_EVENT_RECORD PVOID
+#define STD_INPUT_HANDLE ((DWORD)-10)
+#define KEY_EVENT 0x1
+#define WINBOOL BOOL
+typedef struct _KEY_EVENT_RECORD
+{
+  WINBOOL bKeyDown;
+  WORD wRepeatCount;
+  WORD wVirtualKeyCode;
+  WORD wVirtualScanCode;
+  union
+  {
+    WCHAR UnicodeChar;
+    CHAR AsciiChar;
+  } uChar;
+  DWORD dwControlKeyState;
+} KEY_EVENT_RECORD, *PKEY_EVENT_RECORD;
+
+typedef struct _INPUT_RECORD
+{
+  WORD EventType;
+  union
+  {
+    KEY_EVENT_RECORD KeyEvent;
+    MOUSE_EVENT_RECORD MouseEvent;
+    WINDOW_BUFFER_SIZE_RECORD WindowBufferSizeEvent;
+    MENU_EVENT_RECORD MenuEvent;
+    FOCUS_EVENT_RECORD FocusEvent;
+  } Event;
+} INPUT_RECORD, *PINPUT_RECORD;
+
+static inline BOOL WINAPI PeekConsoleInput(HANDLE hConsoleInput, PINPUT_RECORD lpBuffer, DWORD nLength, LPDWORD lpNumberOfEventsRead)
+{
+  return FALSE;
+}
+
+static inline HANDLE WINAPI GetStdHandle(DWORD nStdHandle)
+{
+  return NULL;
+}
+
+static inline BOOL WINAPI ReadConsoleInput(HANDLE hConsoleInput, PINPUT_RECORD lpBuffer, DWORD nLength, LPDWORD lpNumberOfEventsRead)
+{
+  return FALSE;
+}
+
 
 typedef unsigned long mem_ptr_t;
 
@@ -84,6 +152,10 @@ typedef unsigned long mem_ptr_t;
 
 /* Plaform specific diagnostic output */
 #define LWIP_PLATFORM_DIAG(x)	do {printf x;} while(0)
+
+#define LWIP_ERROR(message, expression, handler) do { if (!(expression)) { \
+  LWIP_PLATFORM_DIAG(("Assertion \"%s\" failed at line %d in %s\n", message, __LINE__, __FILE__)); \
+  handler;} } while(0)
 
 #ifdef LWIP_UNIX_EMPTY_ASSERT
 #define LWIP_PLATFORM_ASSERT(x)

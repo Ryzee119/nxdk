@@ -11,7 +11,7 @@ LWIPSRCS := $(COREFILES) \
 # Include driver sources
 DRIVERSRCS := $(NXDK_DIR)/lib/net/pktdrv/pktdrv.c \
               $(NXDK_DIR)/lib/net/nforceif/src/driver.c \
-              $(NXDK_DIR)/lib/net/nforceif/src/sys_arch.c
+              $(NXDK_DIR)/lib/net/lwip/contrib/ports/win32/sys_arch.c
 
 NET_SRCS := \
 	$(LWIPSRCS) \

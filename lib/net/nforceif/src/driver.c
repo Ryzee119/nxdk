@@ -33,6 +33,7 @@
  *
  */
 #include "lwip/opt.h"
+#include "lwip/sys.h"
 #include "lwip/def.h"
 #include "lwip/mem.h"
 #include "lwip/pbuf.h"
@@ -42,6 +43,8 @@
 #include "lwip/mld6.h"
 #include "netif/etharp.h"
 #include "netif/ppp/pppoe.h"
+
+unsigned char debug_flags;
 
 /* Define those to better describe your network interface. */
 #define IFNAME0 'x'
