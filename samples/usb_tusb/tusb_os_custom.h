@@ -46,7 +46,7 @@ static inline void osal_task_delay(uint32_t msec)
 //--------------------------------------------------------------------+
 // Binary Semaphore API
 //--------------------------------------------------------------------+
-typedef HANDLE    osal_semaphore_def_t;
+typedef HANDLE osal_semaphore_def_t;
 typedef PHANDLE osal_semaphore_t;
 
 static inline osal_semaphore_t osal_semaphore_create(osal_semaphore_def_t* semdef)
@@ -81,7 +81,7 @@ static inline void osal_semaphore_reset(osal_semaphore_t sem_hdl)
 // MUTEX API
 // Within tinyusb, mutex is never used in ISR context
 //--------------------------------------------------------------------+
-typedef HANDLE    osal_mutex_def_t;
+typedef HANDLE osal_mutex_def_t;
 typedef PHANDLE osal_mutex_t;
 
 static inline osal_mutex_t osal_mutex_create(osal_mutex_def_t *mdef)
@@ -89,7 +89,7 @@ static inline osal_mutex_t osal_mutex_create(osal_mutex_def_t *mdef)
     HANDLE mutex;
     NTSTATUS status;
 
-    status = NtCreateMutant(&mutex, NULL, TRUE);
+    status = NtCreateMutant(&mutex, NULL, FALSE);
     if (!NT_SUCCESS(status))
     {
         DbgPrint("%s: Error creating mutex NTStatus: %08x\n", __FUNCTION__, (unsigned int)status);
@@ -102,19 +102,8 @@ static inline osal_mutex_t osal_mutex_create(osal_mutex_def_t *mdef)
 
 static inline bool osal_mutex_lock(osal_mutex_t mutex_hdl, uint32_t msec)
 {
-    PVOID mutex;
-    NTSTATUS status;
-
-    status = ObReferenceObjectByHandle(*mutex_hdl, &ExMutantObjectType, &mutex);
-    if (!NT_SUCCESS(status))
-    {
-        DbgPrint("%s: Could not find mutex object. NTSTATUS: %08x\n", __FUNCTION__, (unsigned int)status);
-        return false;
-    }
-    //Is this the right way to do this??
-    KeInitializeMutant((PKMUTANT)mutex, TRUE);
-    ObfDereferenceObject(mutex);
-    return true;
+    DWORD dwWaitResult = WaitForSingleObject(mutex_hdl, msec);
+    return (dwWaitResult == WAIT_OBJECT_0);
 }
 
 static inline bool osal_mutex_unlock(osal_mutex_t mutex_hdl)
