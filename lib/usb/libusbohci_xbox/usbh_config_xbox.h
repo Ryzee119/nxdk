@@ -87,7 +87,7 @@
 #define USB_vdebug(...)
 #endif
 #else
-#define USB_debug(...)
+//#define USB_debug(...)
 #define USB_vdebug(...)
 #endif
 
