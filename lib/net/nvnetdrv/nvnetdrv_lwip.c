@@ -56,9 +56,13 @@ typedef struct
 LWIP_MEMPOOL_DECLARE(RX_POOL, RX_BUFF_CNT, sizeof(rx_pbuf_t), "Zero-copy RX PBUF pool");
 void rx_pbuf_free_callback(struct pbuf *p)
 {
+    SYS_ARCH_DECL_PROTECT(old_level);
     rx_pbuf_t *rx_pbuf = (rx_pbuf_t *)p;
+
+    SYS_ARCH_PROTECT(old_level);
     nvnetdrv_rx_release(rx_pbuf->buff);
     LWIP_MEMPOOL_FREE(RX_POOL, rx_pbuf);
+    SYS_ARCH_UNPROTECT(old_level);
 }
 
 void rx_callback(void *buffer, uint16_t length)

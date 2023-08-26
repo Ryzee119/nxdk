@@ -350,16 +350,10 @@ static void NTAPI rxrequeue_thread(PKSTART_ROUTINE StartRoutine, PVOID StartCont
 
     while (true) {
         //Sleep until there is an empty descriptor in the RX ring
-        if (!g_running) break;
         KeWaitForSingleObject(&g_rxRingFreeDescriptors, Executive, KernelMode, FALSE, NULL);
         if (!g_running) break;
-
-        do {
-            nvnetdrv_rx_requeue(g_rxRingEndIndex);
-            g_rxRingEndIndex = (g_rxRingEndIndex + 1) % RX_RING_SIZE;
-        } while (g_running &&
-                 KeWaitForSingleObject(&g_rxRingFreeDescriptors, Executive,
-                                       KernelMode, FALSE, &no_sleep) == STATUS_SUCCESS);
+        nvnetdrv_rx_requeue(g_rxRingEndIndex);
+        g_rxRingEndIndex = (g_rxRingEndIndex + 1) % RX_RING_SIZE;
     }
     PsTerminateSystemThread(0);
 }
@@ -373,16 +367,10 @@ static void NTAPI rxcallback_thread(PKSTART_ROUTINE StartRoutine, PVOID StartCon
 
     while (true) {
         //Sleep until there is an RX callback that needs processing
-        if (!g_running) break;
         KeWaitForSingleObject(&g_rxCallbackQueued, Executive, KernelMode, FALSE, NULL);
         if (!g_running) break;
-
-        do {
-            g_rxCallback(g_rxCallbackQueue[idx].bufAddr, g_rxCallbackQueue[idx].length);
-            idx = (idx + 1) % g_rxBuffCnt;
-        } while (g_running &&
-                 KeWaitForSingleObject(&g_rxCallbackQueued, Executive,
-                                       KernelMode, FALSE, &no_sleep) == STATUS_SUCCESS);
+        g_rxCallback(g_rxCallbackQueue[idx].bufAddr, g_rxCallbackQueue[idx].length);
+        idx = (idx + 1) % g_rxBuffCnt;
     }
     PsTerminateSystemThread(0);
 }
