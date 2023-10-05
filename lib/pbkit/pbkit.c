@@ -468,14 +468,14 @@ static void pb_vbl_handler(void)
         {
             pb_set_gamma_ramp(&pb_GammaRamp[index][0][0]);
             pb_GammaRampbReady[index]=0;
-            index=(index+1)%3;
+            index=(index+1)%2;
             pb_GammaRampIdx=index;
         }
 
         VIDEOREG(NV_PGRAPH_INCREMENT)|=NV_PGRAPH_INCREMENT_READ_3D_TRIGGER;
 
         //rotate next back buffer & gamma ramp index
-        next=(next+1)%3;
+        next=(next+1)%2;
         pb_BackBufferNxtVBL=next;
     }
 
@@ -540,7 +540,7 @@ static void pb_subprog(DWORD subprogID, DWORD paramA, DWORD paramB)
             next=pb_BackBufferNxt;
             pb_BackBufferIndex[next]=paramA;
             pb_BackBufferbReady[next]=1;
-            next=(next+1)%3;
+            next=(next+1)%2;
             pb_BackBufferNxt=next;
             break;
 
@@ -2474,12 +2474,12 @@ int pb_finished(void)
     p=pb_push1(p,NV20_TCL_PRIMITIVE_3D_WAIT_MAKESPACE,0); //wait/makespace (obtains null status)
     p=pb_push1(p,NV20_TCL_PRIMITIVE_3D_PARAMETER_A,pb_back_index); //set param=back buffer index to show up
     p=pb_push1(p,NV20_TCL_PRIMITIVE_3D_FIRE_INTERRUPT,PB_FINISHED); //subprogID PB_FINISHED: gets frame ready to show up soon
-//  p=pb_push1(p,NV20_TCL_PRIMITIVE_3D_STALL_PIPELINE,0); //stall gpu pipeline (not sure it's needed in triple buffering technic)
+    p=pb_push1(p,NV20_TCL_PRIMITIVE_3D_STALL_PIPELINE,0); //stall gpu pipeline (not sure it's needed in triple buffering technic)
     pb_end(p);
 
     //insert in push buffer the commands to trigger selection of next back buffer
     //(because previous ones may not have finished yet, so need to use 0x0100 call)
-    pb_back_index=(pb_back_index+1)%3;
+    pb_back_index=(pb_back_index+1)%2;
     pb_target_back_buffer();
 
     return 0;
@@ -3360,7 +3360,7 @@ int pb_init(void)
     Width=vm.width;
     Height=vm.height;
 
-    BackBufferCount=2;          //triple buffering technic!
+    BackBufferCount=1;          //triple buffering technic!
                         //allows dynamic details adjustment
 
     pb_FrameBuffersCount=BackBufferCount+1; //front buffer + back buffers
