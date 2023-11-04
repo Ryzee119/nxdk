@@ -21,6 +21,18 @@ extern "C"
 #define XID_INTERFACE_CLASS 0x58
 #define XID_INTERFACE_SUBCLASS 0x42
 
+typedef enum {XIDUNKNOWN = 0, XBOXONE, XBOX360_WIRED,
+              XBOXOG_CONTROLLER, XBOXOG_STEELBATTALION, XBOXOG_XIR} xidtype_t;
+
+#define OGX_GAMEPAD_DPAD_UP 0x0001
+#define OGX_GAMEPAD_DPAD_DOWN 0x0002
+#define OGX_GAMEPAD_DPAD_LEFT 0x0004
+#define OGX_GAMEPAD_DPAD_RIGHT 0x0008
+#define OGX_GAMEPAD_START 0x0010
+#define OGX_GAMEPAD_BACK 0x0020
+#define OGX_GAMEPAD_LEFT_THUMB 0x0040
+#define OGX_GAMEPAD_RIGHT_THUMB 0x0080
+
 struct xid_dev;
 typedef void(XID_CONN_FUNC)(struct xid_dev *hdev, int param);
 
@@ -80,7 +92,9 @@ typedef struct xid_dev
     UTR_T *utr_list[XID_MAX_TRANSFER_QUEUE]; //UTR list of queued transfers
     IFACE_T *iface;                          //This xid interface
     uint32_t uid;                            //A unique ID to identify this device
+    xidtype_t type;                          //Type of XID device.
     struct xid_dev *next;                    //Pointer to the next xid in the linked list.
+    void *rx_complete_cb[XID_MAX_TRANSFER_QUEUE]; //Hook user callback to convert other controller types into OG Xbox format
     void *user_data;                         //Pointer to an optional user struct
 } xid_dev_t;
 
