@@ -92,64 +92,111 @@ static void free_xid_device(xid_dev_t *xid_dev) {
 static int xid_probe(IFACE_T *iface) {
     UDEV_T *udev = iface->udev;
     xid_dev_t *xid;
-    DESC_IF_T *ifd = iface->aif->ifd;
+    ALT_IFACE_T *aif = iface->aif;
+    DESC_IF_T *ifd = aif->ifd;
 
-    if (ifd->bInterfaceClass != XID_INTERFACE_CLASS || ifd->bInterfaceSubClass != XID_INTERFACE_SUBCLASS)
+
+    xidtype_t type = XIDUNKNOWN;
+    xid_descriptor *xid_desc = usbh_alloc_mem(sizeof(xid_descriptor));
+    if (xid_desc == NULL)
     {
+        return USBH_ERR_MEMORY_OUT;
+    }
+    memset(xid_desc, 0, sizeof(xid_descriptor));
+
+    //FIXME: Are these true across all devices including 3rd party?
+    if (ifd->bInterfaceSubClass == 0x5D &&
+             ifd->bInterfaceProtocol == 0x01)
+    {
+        type = XBOX360_WIRED;
+        xid_desc->bType = XID_TYPE_GAMECONTROLLER;
+    }
+    else if (ifd->bInterfaceSubClass == 0x47 &&
+             ifd->bInterfaceProtocol == 0xD0 &&
+             aif->ep[0].bInterval == 0x04 &&
+             aif->ep[1].bInterval == 0x04) //The one we want has a bInternal of 4ms on both eps.
+    {
+        type = XBOXONE;
+        xid_desc->bType = XID_TYPE_GAMECONTROLLER;
+    }
+    else if (ifd->bInterfaceClass == XID_INTERFACE_CLASS &&
+             ifd->bInterfaceSubClass == XID_INTERFACE_SUBCLASS)
+    {
+        // Device is an OG Xbox peripheral. Check the XID descriptor to find out what type:
+        // Ref https://xboxdevwiki.net/Xbox_Input_Devices
+        uint32_t xfer_len;
+        usbh_ctrl_xfer(iface->udev,
+                       0xC1,                   /* bmRequestType */
+                       0x06,                   /* bRequest */
+                       0x4200,                 /* wValue */
+                       iface->if_num,          /* wIndex */
+                       sizeof(xid_descriptor), /* wLength */
+                       (uint8_t *)xid_desc, &xfer_len, 100);
+        uint8_t xid_bType = xid_desc->bType;
+        switch (xid_bType)
+        {
+            case 0x01: type = XBOXOG_CONTROLLER;     break; //Duke,S,Wheel,Arcade stick
+            case 0x03: type = XBOXOG_XIR;            break; //Xbox DVD Movie Playback IR Dongle
+            case 0x80: type = XBOXOG_STEELBATTALION; break; //Steel Battalion Controller
+            default:   type = XIDUNKNOWN;            break;
+        }
+    }
+
+    if (type == XIDUNKNOWN)
+    {
+        usbh_free_mem(xid_desc, sizeof(xid_descriptor));
         return USBH_ERR_NOT_MATCHED;
     }
 
     xid = alloc_xid_device();
-
     if (xid == NULL)
     {
+        usbh_free_mem(xid_desc, sizeof(xid_descriptor));
         return USBH_ERR_MEMORY_OUT;
     }
 
-    //Device is an OG Xbox peripheral.
-    //Get the XID descriptor to find out what type:
-    xid_descriptor *xid_desc = (xid_descriptor *)usbh_alloc_mem(sizeof(xid_descriptor));
-    uint32_t xfer_len;
-    int32_t ret = usbh_ctrl_xfer(iface->udev,
-                                 0xC1,                   //bmRequestType
-                                 0x06,                   //bRequest
-                                 0x4200,                 //wValue
-                                 iface->if_num,          //wIndex
-                                 sizeof(xid_descriptor), //wLength
-                                 (uint8_t *)xid_desc, &xfer_len, 100);
-
-    //Populate the xid device struct.
-    if (ret != USBH_OK)
-    {
-        //Controller didn't respond to control transfer. Likely some unusual 3rd party device.
-        //Exit for now.
-        USBH_XID_DEBUG("Error: XID did not have xid descriptor.\n");
-        usbh_free_mem(xid_desc, sizeof(xid_descriptor));
-        free_xid_device(xid);
-        return USBH_ERR_NOT_MATCHED;
-    }
-
     memcpy(&xid->xid_desc, xid_desc, sizeof(xid_descriptor));
+    usbh_free_mem(xid_desc, sizeof(xid_descriptor));
 
     xid->iface = iface;
     xid->idVendor = udev->descriptor.idVendor;
     xid->idProduct = udev->descriptor.idProduct;
     xid->next = NULL;
     xid->user_data = NULL;
+    xid->type = type;
     iface->context = (void *)xid;
 
-    usbh_free_mem(xid_desc, sizeof(xid_descriptor));
-
-#ifdef ENABLE_USBH_XID_DEBUG
-    for (int i = 0; i < sizeof(xid_descriptor); i++)
+    // Handle controller specific initialisations
+    if (xid->type == XBOXONE)
     {
-        USBH_XID_DEBUG("%02x ", ((uint8_t*)&xid->xid_desc)[i]);
-    }
-    USBH_XID_DEBUG("\n");
-#endif
+        static uint8_t xboxone_start_input[] = {0x05, 0x20, 0x03, 0x01, 0x00};
+        static uint8_t xboxone_s_init[] = {0x05, 0x20, 0x00, 0x0f, 0x06};
+        static uint8_t xboxone_pdp_init1[] = {0x0a, 0x20, 0x00, 0x03, 0x00, 0x01, 0x14};
+        static uint8_t xboxone_pdp_init2[] = {0x06, 0x30};
+        static uint8_t xboxone_pdp_init3[] = {0x06, 0x20, 0x00, 0x02, 0x01, 0x00};
+        usbh_xid_write(xid, 0, xboxone_start_input, sizeof(xboxone_start_input), NULL);
 
-    USBH_XID_DEBUG("OG Xbox peripheral type %02x, sub type: %02x connected\n", xid->xid_desc.bType,
-               xid->xid_desc.bSubType);
+        //Init packet for XBONE S/Elite controllers (return from bluetooth mode)
+        if (xid->idVendor == 0x045e && (xid->idProduct == 0x02ea || xid->idProduct == 0x0b00 || xid->idProduct == 0x0b12))
+        {
+            usbh_xid_write(xid, 0, xboxone_s_init, sizeof(xboxone_s_init), NULL);
+        }
+
+        if (xid->idVendor == 0x0e6f)
+        {
+            usbh_xid_write(xid, 0, xboxone_pdp_init1, sizeof(xboxone_pdp_init1), NULL);
+            usbh_xid_write(xid, 0, xboxone_pdp_init2, sizeof(xboxone_pdp_init2), NULL);
+            usbh_xid_write(xid, 0, xboxone_pdp_init3, sizeof(xboxone_pdp_init3), NULL);
+        }
+    }
+
+    else if (xid->type == XBOX360_WIRED)
+    {
+        uint8_t port = iface->udev->port_num;
+        port += (port <= 2) ? 2 : -2; //Xbox ports are numbered 3,4,1,2, make it 1,2,3,4
+        uint8_t xbox360wired_set_led[] = {0x01, 0x03, port + 5};
+        usbh_xid_write(xid, 0, xbox360wired_set_led, sizeof(xbox360wired_set_led), NULL);
+    }
 
     if (xid_conn_func)
     {
@@ -229,6 +276,110 @@ xid_dev_t *usbh_xid_get_device_list(void) {
     return pxid_list;
 }
 
+static void int_read_callback_hook(UTR_T *utr) {
+    xid_dev_t *xid_dev = (xid_dev_t *)utr->context;
+    void *user_callback = NULL;
+
+    for (int i = 0; i < XID_MAX_TRANSFER_QUEUE; i++)
+    {
+        UTR_T *_utr = xid_dev->utr_list[i];
+        if (utr == _utr)
+        {
+            user_callback = xid_dev->rx_complete_cb[i];
+            break;
+        }
+    }
+
+    if (utr->status < 0 || xid_dev == NULL || xid_dev->user_data == NULL)
+    {
+        goto pass_to_user;
+    }
+
+    if (xid_dev->type == XBOXONE)
+    {
+        xid_gamepad_in remap;
+        memset(&remap, 0, sizeof(xid_gamepad_in));
+        uint8_t *rdata = utr->buff;
+        uint16_t xbone_buttons = rdata[5] << 8 | rdata[4];
+
+        remap.startByte = 0;
+        remap.bLength = sizeof(xid_gamepad_in);
+        if (xbone_buttons & (1 << 8)) remap.dButtons |= OGX_GAMEPAD_DPAD_UP;
+        if (xbone_buttons & (1 << 9)) remap.dButtons |= OGX_GAMEPAD_DPAD_DOWN;
+        if (xbone_buttons & (1 << 10)) remap.dButtons |= OGX_GAMEPAD_DPAD_LEFT;
+        if (xbone_buttons & (1 << 11)) remap.dButtons |= OGX_GAMEPAD_DPAD_RIGHT;
+        if (xbone_buttons & (1 << 2)) remap.dButtons |= OGX_GAMEPAD_START;
+        if (xbone_buttons & (1 << 3)) remap.dButtons |= OGX_GAMEPAD_BACK;
+        if (xbone_buttons & (1 << 14)) remap.dButtons |= OGX_GAMEPAD_LEFT_THUMB;
+        if (xbone_buttons & (1 << 15)) remap.dButtons |= OGX_GAMEPAD_RIGHT_THUMB;
+        if (xbone_buttons & (1 << 12)) remap.white = 0xFF;
+        if (xbone_buttons & (1 << 13)) remap.black = 0xFF;
+        if (xbone_buttons & (1 << 4)) remap.a = 0xFF;
+        if (xbone_buttons & (1 << 5)) remap.b = 0xFF;
+        if (xbone_buttons & (1 << 6)) remap.x = 0xFF;
+        if (xbone_buttons & (1 << 7)) remap.y = 0xFF;
+
+        remap.l = (rdata[7] << 8 | rdata[6]) >> 2;
+        remap.r = (rdata[9] << 8 | rdata[8]) >> 2;
+        remap.leftStickX = rdata[11] << 8 | rdata[10];
+        remap.leftStickY = rdata[13] << 8 | rdata[12];
+        remap.rightStickX = rdata[15] << 8 | rdata[14];
+        remap.rightStickY = rdata[17] << 8 | rdata[16];
+
+        if (rdata[0] == 0x20) {
+            memcpy(utr->buff, &remap, sizeof(xid_gamepad_in));
+        } else {
+            memset(utr->buff, 0, sizeof(xid_gamepad_in));
+        }
+        utr->xfer_len = sizeof(xid_gamepad_in);
+    }
+    if (xid_dev->type == XBOX360_WIRED)
+    {
+        xid_gamepad_in remap;
+        memset(&remap, 0, sizeof(xid_gamepad_in));
+        uint8_t *rdata = utr->buff;
+        uint16_t xb360_buttons = rdata[3] << 8 | rdata[2];
+
+        remap.startByte = 0;
+        remap.bLength = sizeof(xid_gamepad_in);
+        if (xb360_buttons & (1 << 0)) remap.dButtons |= OGX_GAMEPAD_DPAD_UP;
+        if (xb360_buttons & (1 << 1)) remap.dButtons |= OGX_GAMEPAD_DPAD_DOWN;
+        if (xb360_buttons & (1 << 2)) remap.dButtons |= OGX_GAMEPAD_DPAD_LEFT;
+        if (xb360_buttons & (1 << 3)) remap.dButtons |= OGX_GAMEPAD_DPAD_RIGHT;
+        if (xb360_buttons & (1 << 4)) remap.dButtons |= OGX_GAMEPAD_START;
+        if (xb360_buttons & (1 << 5)) remap.dButtons |= OGX_GAMEPAD_BACK;
+        if (xb360_buttons & (1 << 6)) remap.dButtons |= OGX_GAMEPAD_LEFT_THUMB;
+        if (xb360_buttons & (1 << 7)) remap.dButtons |= OGX_GAMEPAD_RIGHT_THUMB;
+        if (xb360_buttons & (1 << 8)) remap.white = 0xFF;
+        if (xb360_buttons & (1 << 9)) remap.black = 0xFF;
+        if (xb360_buttons & (1 << 12)) remap.a = 0xFF;
+        if (xb360_buttons & (1 << 13)) remap.b = 0xFF;
+        if (xb360_buttons & (1 << 14)) remap.x = 0xFF;
+        if (xb360_buttons & (1 << 15)) remap.y = 0xFF;
+
+        remap.l = (rdata[4] << 8 | rdata[4]) >> 2;
+        remap.r = (rdata[5] << 8 | rdata[5]) >> 2;
+        remap.leftStickX = rdata[7] << 8 | rdata[6];
+        remap.leftStickY = rdata[9] << 8 | rdata[8];
+        remap.rightStickX = rdata[11] << 8 | rdata[10];
+        remap.rightStickY = rdata[13] << 8 | rdata[12];
+
+        if (rdata[1] == 0x14) {
+            memcpy(utr->buff, &remap, sizeof(xid_gamepad_in));
+        } else {
+            memset(utr->buff, 0, sizeof(xid_gamepad_in));
+        }
+        utr->xfer_len = sizeof(xid_gamepad_in);
+    }
+
+pass_to_user:
+    if (user_callback)
+    {
+        FUNC_UTR_T utr_callback = (FUNC_UTR_T)user_callback;
+        utr_callback(utr);
+    }
+}
+
 static int32_t queue_int_xfer(xid_dev_t *xid_dev, uint8_t dir, uint8_t ep_addr, uint8_t *buff, uint32_t len, void *callback) {
     IFACE_T *iface = (IFACE_T *)xid_dev->iface;
     UTR_T *utr = NULL;
@@ -293,7 +444,7 @@ static int32_t queue_int_xfer(xid_dev_t *xid_dev, uint8_t dir, uint8_t ep_addr, 
     utr->ep = ep;
     utr->data_len = (dir == EP_ADDR_DIR_OUT && len < ep->wMaxPacketSize) ? len : ep->wMaxPacketSize;
     utr->xfer_len = 0;
-    utr->func = callback;
+    utr->func = int_read_callback_hook;
     utr->buff = usbh_alloc_mem(ep->wMaxPacketSize);
     if (utr->buff == NULL)
     {
@@ -315,6 +466,7 @@ static int32_t queue_int_xfer(xid_dev_t *xid_dev, uint8_t dir, uint8_t ep_addr, 
     }
 
     //Register a queued UTR for this device.
+    xid_dev->rx_complete_cb[free_slot] = callback;
     xid_dev->utr_list[free_slot] = utr;
 
     return USBH_OK;
@@ -356,20 +508,37 @@ int32_t usbh_xid_write(xid_dev_t *xid_dev, uint8_t ep_addr, uint8_t *txbuff, uin
  * @param h_value Value of the high frequency rumble. 0 to 0xFFFF.
  * @return USBH_OK or the error. 
  */
-int32_t usbh_xid_rumble(xid_dev_t *xid_dev, uint16_t l_value, uint16_t h_value){
-    if (xid_dev->xid_desc.bType != XID_TYPE_GAMECONTROLLER)
+int32_t usbh_xid_rumble(xid_dev_t *xid_dev, uint16_t l_value, uint16_t h_value)
+{
+    if (xid_dev->type == XBOXOG_CONTROLLER)
     {
-        return USBH_ERR_NOT_SUPPORTED;
+        xid_gamepad_out command =
+            {
+                .startByte = 0,
+                .bLength = sizeof(xid_gamepad_out),
+                .lValue = l_value,
+                .hValue = h_value,
+            };
+        return usbh_xid_write(xid_dev, 0, (uint8_t *)&command, sizeof(xid_gamepad_out), NULL);
     }
 
-    xid_gamepad_out command =
+    else if (xid_dev->type == XBOXONE)
     {
-        .startByte = 0,
-        .bLength = sizeof(xid_gamepad_out),
-        .lValue = l_value,
-        .hValue = h_value,
-    };
-    return usbh_xid_write(xid_dev, 0, (uint8_t *)&command, sizeof(xid_gamepad_out), NULL);
+        uint8_t xboxone_rumble[] = {0x09, 0x00, 0x00, 0x09, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xEB};
+        xboxone_rumble[8] = (float)l_value / 655.36f; //Scale is 0 to 100
+        xboxone_rumble[9] = (float)h_value / 655.36f; //Scale is 0 to 100
+        return usbh_xid_write(xid_dev, 0, xboxone_rumble, sizeof(xboxone_rumble), NULL);
+    }
+
+    else if (xid_dev->type == XBOX360_WIRED)
+    {
+        uint8_t xbox360_wired_rumble[] = {0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+        xbox360_wired_rumble[3] = l_value;
+        xbox360_wired_rumble[4] = h_value;
+        return usbh_xid_write(xid_dev, 0, xbox360_wired_rumble, sizeof(xbox360_wired_rumble), NULL);
+    }
+
+    return USBH_OK;
 }
 
 /**
