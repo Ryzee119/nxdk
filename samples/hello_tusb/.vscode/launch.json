@@ -1,0 +1,27 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Debug QEMU GDB Server",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/main.exe",
+        "cwd": "${workspaceFolder}",
+        "args": [],
+  
+        // Set this to the IP and port of your QEMU GDB server
+        "miDebuggerServerAddress": "localhost:1234",
+  
+        // Use GDB for debugging
+        "MIMode": "gdb",
+        "setupCommands": [
+          {
+            "description": "Enable pretty-printing for gdb",
+            "text": "-enable-pretty-printing",
+            "ignoreFailures": true
+          }
+        ],
+        "miDebuggerPath": "gdb"
+      }
+    ]
+  }
