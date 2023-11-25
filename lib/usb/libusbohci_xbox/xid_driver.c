@@ -171,6 +171,7 @@ static int xid_probe(IFACE_T *iface) {
     {
         static uint8_t xboxone_start_input[] = {0x05, 0x20, 0x03, 0x01, 0x00};
         static uint8_t xboxone_s_init[] = {0x05, 0x20, 0x00, 0x0f, 0x06};
+        static uint8_t extra_input_packet_init[] = {0x4d, 0x10, 0x01, 0x02, 0x07, 0x00};
         static uint8_t xboxone_pdp_init1[] = {0x0a, 0x20, 0x00, 0x03, 0x00, 0x01, 0x14};
         static uint8_t xboxone_pdp_init2[] = {0x06, 0x30};
         static uint8_t xboxone_pdp_init3[] = {0x06, 0x20, 0x00, 0x02, 0x01, 0x00};
@@ -180,6 +181,7 @@ static int xid_probe(IFACE_T *iface) {
         if (xid->idVendor == 0x045e && (xid->idProduct == 0x02ea || xid->idProduct == 0x0b00 || xid->idProduct == 0x0b12))
         {
             usbh_xid_write(xid, 0, xboxone_s_init, sizeof(xboxone_s_init), NULL);
+            usbh_xid_write(xid, 0, extra_input_packet_init, sizeof(extra_input_packet_init), NULL);
         }
 
         if (xid->idVendor == 0x0e6f)
