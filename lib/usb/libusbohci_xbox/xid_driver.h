@@ -15,7 +15,7 @@ extern "C"
 #define CONFIG_XID_MAX_DEV 4
 #endif
 #ifndef XID_MAX_TRANSFER_QUEUE
-#define XID_MAX_TRANSFER_QUEUE 4
+#define XID_MAX_TRANSFER_QUEUE 16
 #endif
 //Ref https://xboxdevwiki.net/index.php?title=Xbox_Input_Devices
 #define XID_INTERFACE_CLASS 0x58
@@ -93,6 +93,7 @@ typedef struct xid_dev
     IFACE_T *iface;                          //This xid interface
     uint32_t uid;                            //A unique ID to identify this device
     xidtype_t type;                          //Type of XID device.
+    uint8_t odata_serial;                    //Counter for xbox one
     struct xid_dev *next;                    //Pointer to the next xid in the linked list.
     void *rx_complete_cb[XID_MAX_TRANSFER_QUEUE]; //Hook user callback to convert other controller types into OG Xbox format
     void *user_data;                         //Pointer to an optional user struct

@@ -23,6 +23,54 @@
 #define USBH_XID_DEBUG(...)
 #endif
 
+/* Xbox One and XSX specific */
+#define GIP_CMD_ACK 0x01
+#define GIP_CMD_ANNOUNCE 0x02
+#define GIP_CMD_IDENTIFY 0x04
+#define GIP_CMD_POWER 0x05
+#define GIP_CMD_AUTHENTICATE 0x06
+#define GIP_CMD_VIRTUAL_KEY 0x07
+#define GIP_CMD_RUMBLE 0x09
+#define GIP_CMD_LED 0x0a
+#define GIP_CMD_FIRMWARE 0x0c
+#define GIP_CMD_INPUT 0x20
+#define GIP_SEQ0 0x00
+#define GIP_OPT_ACK 0x10
+#define GIP_OPT_INTERNAL 0x20
+#define GIP_PL_LEN(N) (N)
+#define GIP_PWR_ON 0x00
+#define GIP_PWR_SLEEP 0x01
+#define GIP_PWR_OFF 0x04
+#define GIP_PWR_RESET 0x07
+#define GIP_LED_ON 0x01
+#define BIT(n) (1UL << (n))
+#define GIP_MOTOR_R  BIT(0)
+#define GIP_MOTOR_L  BIT(1)
+#define GIP_MOTOR_RT BIT(2)
+#define GIP_MOTOR_LT BIT(3)
+#define GIP_MOTOR_ALL (GIP_MOTOR_R | GIP_MOTOR_L | GIP_MOTOR_RT | GIP_MOTOR_LT)
+static uint8_t xboxone_power_on[] = {GIP_CMD_POWER, GIP_OPT_INTERNAL, GIP_SEQ0, GIP_PL_LEN(1), GIP_PWR_ON};
+static uint8_t xboxone_s_init[] = {GIP_CMD_POWER, GIP_OPT_INTERNAL, GIP_SEQ0, GIP_PL_LEN(15), 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55, 0x53, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static uint8_t xboxone_s_led_init[] = {GIP_CMD_LED, GIP_OPT_INTERNAL, GIP_SEQ0, GIP_PL_LEN(3), 0x00, 0x01, 0x14};
+static uint8_t extra_input_packet_init[] = {0x4d, 0x10, GIP_SEQ0, 0x02, 0x07, 0x00};
+static uint8_t xboxone_pdp_led_on[] = {GIP_CMD_LED, GIP_OPT_INTERNAL, GIP_SEQ0, GIP_PL_LEN(3), 0x00, GIP_LED_ON, 0x14};
+static uint8_t xboxone_pdp_auth[] = {GIP_CMD_AUTHENTICATE, GIP_OPT_INTERNAL, GIP_SEQ0, GIP_PL_LEN(2), 0x01, 0x00};
+static void xbox_one_init(xid_dev_t *xid) {
+    usbh_xid_write(xid, 0, xboxone_power_on, sizeof(xboxone_power_on), NULL);
+    usbh_xid_write(xid, 0, xboxone_s_init, sizeof(xboxone_s_init), NULL);
+    usbh_xid_write(xid, 0, xboxone_s_led_init, sizeof(xboxone_s_led_init), NULL);
+
+    if (xid->idVendor == 0x045e && xid->idProduct == 0x0b00) {
+        usbh_xid_write(xid, 0, extra_input_packet_init, sizeof(extra_input_packet_init), NULL);
+    }
+
+    if (xid->idVendor == 0x0e6f)
+    {
+        usbh_xid_write(xid, 0, xboxone_pdp_led_on, sizeof(xboxone_pdp_led_on), NULL);
+        usbh_xid_write(xid, 0, xboxone_pdp_auth, sizeof(xboxone_pdp_auth), NULL);
+    }
+}
+
 static xid_dev_t xid_devices[CONFIG_XID_MAX_DEV];
 static xid_dev_t *pxid_list = NULL;
 static XID_CONN_FUNC *xid_conn_func = NULL, *xid_disconn_func = NULL;
@@ -164,32 +212,13 @@ static int xid_probe(IFACE_T *iface) {
     xid->next = NULL;
     xid->user_data = NULL;
     xid->type = type;
+    xid->odata_serial = 1;
     iface->context = (void *)xid;
 
     // Handle controller specific initialisations
     if (xid->type == XBOXONE)
     {
-        static uint8_t xboxone_start_input[] = {0x05, 0x20, 0x03, 0x01, 0x00};
-        static uint8_t xboxone_s_init[] = {0x05, 0x20, 0x00, 0x0f, 0x06};
-        static uint8_t extra_input_packet_init[] = {0x4d, 0x10, 0x01, 0x02, 0x07, 0x00};
-        static uint8_t xboxone_pdp_init1[] = {0x0a, 0x20, 0x00, 0x03, 0x00, 0x01, 0x14};
-        static uint8_t xboxone_pdp_init2[] = {0x06, 0x30};
-        static uint8_t xboxone_pdp_init3[] = {0x06, 0x20, 0x00, 0x02, 0x01, 0x00};
-        usbh_xid_write(xid, 0, xboxone_start_input, sizeof(xboxone_start_input), NULL);
-
-        //Init packet for XBONE S/Elite controllers (return from bluetooth mode)
-        if (xid->idVendor == 0x045e && (xid->idProduct == 0x02ea || xid->idProduct == 0x0b00 || xid->idProduct == 0x0b12))
-        {
-            usbh_xid_write(xid, 0, xboxone_s_init, sizeof(xboxone_s_init), NULL);
-            usbh_xid_write(xid, 0, extra_input_packet_init, sizeof(extra_input_packet_init), NULL);
-        }
-
-        if (xid->idVendor == 0x0e6f)
-        {
-            usbh_xid_write(xid, 0, xboxone_pdp_init1, sizeof(xboxone_pdp_init1), NULL);
-            usbh_xid_write(xid, 0, xboxone_pdp_init2, sizeof(xboxone_pdp_init2), NULL);
-            usbh_xid_write(xid, 0, xboxone_pdp_init3, sizeof(xboxone_pdp_init3), NULL);
-        }
+        xbox_one_init(xid);
     }
 
     else if (xid->type == XBOX360_WIRED)
@@ -299,37 +328,39 @@ static void int_read_callback_hook(UTR_T *utr) {
 
     if (xid_dev->type == XBOXONE)
     {
-        xid_gamepad_in remap;
-        memset(&remap, 0, sizeof(xid_gamepad_in));
         uint8_t *rdata = utr->buff;
-        uint16_t xbone_buttons = rdata[5] << 8 | rdata[4];
+        if (rdata[0] == GIP_CMD_INPUT) {
+            xid_gamepad_in remap;
+            memset(&remap, 0, sizeof(xid_gamepad_in));
+            uint16_t xbone_buttons = rdata[5] << 8 | rdata[4];
 
-        remap.startByte = 0;
-        remap.bLength = sizeof(xid_gamepad_in);
-        if (xbone_buttons & (1 << 8)) remap.dButtons |= OGX_GAMEPAD_DPAD_UP;
-        if (xbone_buttons & (1 << 9)) remap.dButtons |= OGX_GAMEPAD_DPAD_DOWN;
-        if (xbone_buttons & (1 << 10)) remap.dButtons |= OGX_GAMEPAD_DPAD_LEFT;
-        if (xbone_buttons & (1 << 11)) remap.dButtons |= OGX_GAMEPAD_DPAD_RIGHT;
-        if (xbone_buttons & (1 << 2)) remap.dButtons |= OGX_GAMEPAD_START;
-        if (xbone_buttons & (1 << 3)) remap.dButtons |= OGX_GAMEPAD_BACK;
-        if (xbone_buttons & (1 << 14)) remap.dButtons |= OGX_GAMEPAD_LEFT_THUMB;
-        if (xbone_buttons & (1 << 15)) remap.dButtons |= OGX_GAMEPAD_RIGHT_THUMB;
-        if (xbone_buttons & (1 << 12)) remap.white = 0xFF;
-        if (xbone_buttons & (1 << 13)) remap.black = 0xFF;
-        if (xbone_buttons & (1 << 4)) remap.a = 0xFF;
-        if (xbone_buttons & (1 << 5)) remap.b = 0xFF;
-        if (xbone_buttons & (1 << 6)) remap.x = 0xFF;
-        if (xbone_buttons & (1 << 7)) remap.y = 0xFF;
+            remap.startByte = 0;
+            remap.bLength = sizeof(xid_gamepad_in);
+            if (xbone_buttons & (1 << 8)) remap.dButtons |= OGX_GAMEPAD_DPAD_UP;
+            if (xbone_buttons & (1 << 9)) remap.dButtons |= OGX_GAMEPAD_DPAD_DOWN;
+            if (xbone_buttons & (1 << 10)) remap.dButtons |= OGX_GAMEPAD_DPAD_LEFT;
+            if (xbone_buttons & (1 << 11)) remap.dButtons |= OGX_GAMEPAD_DPAD_RIGHT;
+            if (xbone_buttons & (1 << 2)) remap.dButtons |= OGX_GAMEPAD_START;
+            if (xbone_buttons & (1 << 3)) remap.dButtons |= OGX_GAMEPAD_BACK;
+            if (xbone_buttons & (1 << 14)) remap.dButtons |= OGX_GAMEPAD_LEFT_THUMB;
+            if (xbone_buttons & (1 << 15)) remap.dButtons |= OGX_GAMEPAD_RIGHT_THUMB;
+            if (xbone_buttons & (1 << 12)) remap.white = 0xFF;
+            if (xbone_buttons & (1 << 13)) remap.black = 0xFF;
+            if (xbone_buttons & (1 << 4)) remap.a = 0xFF;
+            if (xbone_buttons & (1 << 5)) remap.b = 0xFF;
+            if (xbone_buttons & (1 << 6)) remap.x = 0xFF;
+            if (xbone_buttons & (1 << 7)) remap.y = 0xFF;
 
-        remap.l = (rdata[7] << 8 | rdata[6]) >> 2;
-        remap.r = (rdata[9] << 8 | rdata[8]) >> 2;
-        remap.leftStickX = rdata[11] << 8 | rdata[10];
-        remap.leftStickY = rdata[13] << 8 | rdata[12];
-        remap.rightStickX = rdata[15] << 8 | rdata[14];
-        remap.rightStickY = rdata[17] << 8 | rdata[16];
-
-        if (rdata[0] == 0x20) {
+            remap.l = (rdata[7] << 8 | rdata[6]) >> 2;
+            remap.r = (rdata[9] << 8 | rdata[8]) >> 2;
+            remap.leftStickX = rdata[11] << 8 | rdata[10];
+            remap.leftStickY = rdata[13] << 8 | rdata[12];
+            remap.rightStickX = rdata[15] << 8 | rdata[14];
+            remap.rightStickY = rdata[17] << 8 | rdata[16];
             memcpy(utr->buff, &remap, sizeof(xid_gamepad_in));
+        } else if(rdata[0] == GIP_CMD_ANNOUNCE) {
+            xbox_one_init(xid_dev);
+            goto ignore_and_requeue;
         } else {
             goto ignore_and_requeue;
         }
@@ -452,7 +483,7 @@ static int32_t queue_int_xfer(xid_dev_t *xid_dev, uint8_t dir, uint8_t ep_addr, 
     utr->ep = ep;
     utr->data_len = (dir == EP_ADDR_DIR_OUT && len < ep->wMaxPacketSize) ? len : ep->wMaxPacketSize;
     utr->xfer_len = 0;
-    utr->func = int_read_callback_hook;
+    utr->func = (dir == EP_ADDR_DIR_IN) ? int_read_callback_hook : (FUNC_UTR_T)callback;
     utr->buff = usbh_alloc_mem(ep->wMaxPacketSize);
     if (utr->buff == NULL)
     {
@@ -505,6 +536,9 @@ int32_t usbh_xid_read(xid_dev_t *xid_dev, uint8_t ep_addr, void *rx_complete_cal
  * @return USBH_OK or the error.
  */
 int32_t usbh_xid_write(xid_dev_t *xid_dev, uint8_t ep_addr, uint8_t *txbuff, uint32_t len, void *tx_complete_callback) {
+    if (xid_dev->type == XBOXONE) {
+        txbuff[2] = xid_dev->odata_serial++;
+    }
     return queue_int_xfer(xid_dev, EP_ADDR_DIR_OUT, ep_addr, txbuff, len, tx_complete_callback);
 }
 
@@ -532,17 +566,17 @@ int32_t usbh_xid_rumble(xid_dev_t *xid_dev, uint16_t l_value, uint16_t h_value)
 
     else if (xid_dev->type == XBOXONE)
     {
-        uint8_t xboxone_rumble[] = {0x09, 0x00, 0x00, 0x09, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xEB};
-        xboxone_rumble[8] = (float)l_value / 655.36f; //Scale is 0 to 100
-        xboxone_rumble[9] = (float)h_value / 655.36f; //Scale is 0 to 100
+        uint8_t xboxone_rumble[] = {GIP_CMD_RUMBLE, 0x00, 0x00, GIP_PL_LEN(9), 0x00, GIP_MOTOR_ALL, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xFF};
+        xboxone_rumble[8] = l_value / 512;
+        xboxone_rumble[9] = h_value / 512;
         return usbh_xid_write(xid_dev, 0, xboxone_rumble, sizeof(xboxone_rumble), NULL);
     }
 
     else if (xid_dev->type == XBOX360_WIRED)
     {
         uint8_t xbox360_wired_rumble[] = {0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-        xbox360_wired_rumble[3] = l_value;
-        xbox360_wired_rumble[4] = h_value;
+        xbox360_wired_rumble[3] = l_value / 256;
+        xbox360_wired_rumble[4] = h_value / 256;
         return usbh_xid_write(xid_dev, 0, xbox360_wired_rumble, sizeof(xbox360_wired_rumble), NULL);
     }
 
