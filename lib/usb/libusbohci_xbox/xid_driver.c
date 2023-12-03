@@ -331,7 +331,7 @@ static void int_read_callback_hook(UTR_T *utr) {
         if (rdata[0] == 0x20) {
             memcpy(utr->buff, &remap, sizeof(xid_gamepad_in));
         } else {
-            memset(utr->buff, 0, sizeof(xid_gamepad_in));
+            goto ignore_and_requeue;
         }
         utr->xfer_len = sizeof(xid_gamepad_in);
     }
@@ -369,7 +369,7 @@ static void int_read_callback_hook(UTR_T *utr) {
         if (rdata[1] == 0x14) {
             memcpy(utr->buff, &remap, sizeof(xid_gamepad_in));
         } else {
-            memset(utr->buff, 0, sizeof(xid_gamepad_in));
+            goto ignore_and_requeue;
         }
         utr->xfer_len = sizeof(xid_gamepad_in);
     }
@@ -380,6 +380,12 @@ pass_to_user:
         FUNC_UTR_T utr_callback = (FUNC_UTR_T)user_callback;
         utr_callback(utr);
     }
+    return;
+
+ignore_and_requeue:
+    utr->xfer_len = 0;
+    utr->bIsTransferDone = 0;
+    usbh_int_xfer(utr);
 }
 
 static int32_t queue_int_xfer(xid_dev_t *xid_dev, uint8_t dir, uint8_t ep_addr, uint8_t *buff, uint32_t len, void *callback) {
@@ -459,6 +465,10 @@ static int32_t queue_int_xfer(xid_dev_t *xid_dev, uint8_t dir, uint8_t ep_addr, 
         memcpy(utr->buff, buff, utr->data_len);
     }
 
+    //Register a queued UTR for this device.
+    xid_dev->rx_complete_cb[free_slot] = callback;
+    xid_dev->utr_list[free_slot] = utr;
+
     ret = usbh_int_xfer(utr);
     if (ret != USBH_OK)
     {
@@ -466,10 +476,6 @@ static int32_t queue_int_xfer(xid_dev_t *xid_dev, uint8_t dir, uint8_t ep_addr, 
         free_utr(utr);
         return ret;
     }
-
-    //Register a queued UTR for this device.
-    xid_dev->rx_complete_cb[free_slot] = callback;
-    xid_dev->utr_list[free_slot] = utr;
 
     return USBH_OK;
 }
