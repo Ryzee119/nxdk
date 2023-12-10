@@ -198,10 +198,12 @@ static void nvnetdrv_handle_rx_irq (void)
             goto release_packet;
         }
 
-        if (!(flags & NV_RX_ERROR) || (flags & NV_RX_FRAMINGERR)) {
+        // Either no error, or the only error is a framing error we process the packet
+        if (!(flags & NV_RX_ERROR) || (flags & NV_RX_ERROR_MASK) == NV_RX_FRAMINGERR) {
             uint16_t packet_length = rx_packet->length;
 
-            if (flags & NV_RX_SUBTRACT1) {
+            if ((flags & (NV_RX_ERROR|NV_RX_FRAMINGERR|NV_RX_SUBTRACT1)) == (NV_RX_ERROR|NV_RX_FRAMINGERR|NV_RX_SUBTRACT1))
+            {
                 INC_STAT(rx_extraByteErrors, 1);
                 if (packet_length > 0)
                     packet_length--;
