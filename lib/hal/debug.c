@@ -15,7 +15,8 @@
 //
 //
 #include <stdarg.h>
-
+#include <stddef.h>
+#include <stdint.h>
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
@@ -26,6 +27,7 @@
 
 #define MARGIN         25
 #define MARGINS        50 // MARGIN*2
+#define ESC '\x1B'
 
 unsigned char *SCREEN_FB = NULL;
 int SCREEN_WIDTH	= 0;
@@ -39,6 +41,33 @@ static const unsigned char systemFont[] =
 {
 #include "font_unscii_16.h"
 };
+
+struct cansid_state {
+	enum {
+		CANSID_ESC,
+		CANSID_BRACKET,
+		CANSID_PARSE,
+		CANSID_BGCOLOR,
+		CANSID_FGCOLOR,
+		CANSID_EQUALS,
+		CANSID_ENDVAL,
+	} state;
+	unsigned char style;
+	unsigned char next_style;
+};
+
+struct color_char {
+	unsigned char style;
+	unsigned char ascii;
+};
+
+static struct cansid_state cansid_init(void);
+static struct color_char cansid_process(struct cansid_state *state, char x);
+static uint32_t ansi_color_to_rgb(uint8_t colour_nibble);
+static struct cansid_state state = {
+	.state = CANSID_ESC,
+	.style = 0x0F,
+	.next_style = 0x0F};
 
 static void synchronizeFramebuffer(void)
 {
@@ -191,18 +220,32 @@ void debugPrint(const char *format, ...)
 	while (*s)
 	{
 		if( nextRow >= (SCREEN_HEIGHT-MARGINS) ) {
-			debugClearScreen();
-			// debugAdvanceScreen();
+			nextRow = MARGIN;
+		} else {
+			unsigned int pixelSize = (SCREEN_BPP+7)/8;
+			unsigned int top = ((nextRow + FONT_HEIGHT+1) * SCREEN_WIDTH) * pixelSize;
+			memset(&SCREEN_FB[top], 0x00, pixelSize * SCREEN_WIDTH * ((FONT_HEIGHT+1) *  1));
 		}
-		
-		if (*s == '\n')
+
+		struct color_char ch = cansid_process(&state, *s);
+		if (ch.ascii == '\0')
+		{
+
+		}
+		else if (ch.ascii == '\n')
 		{
 			nextRow += FONT_HEIGHT+1;
 			nextCol = MARGIN;
 		}
+		else if (ch.ascii == '\r')
+		{
+			nextCol = MARGIN;
+		}
 		else
 		{
-			drawChar( *s, nextCol, nextRow, fgColour, bgColour );
+			fgColour = ansi_color_to_rgb((ch.style & 0x0F) >> 0);
+			bgColour = ansi_color_to_rgb((ch.style & 0xF0) >> 8);
+			drawChar( ch.ascii, nextCol, nextRow, fgColour, bgColour );
 
 			nextCol += FONT_WIDTH+1;
 			if( nextCol > (SCREEN_WIDTH-MARGINS))
@@ -275,4 +318,152 @@ void debugPrintHex(const char *buffer, int length)
 		sprintf(tmp, "%02x ", buffer[i] & 0xFF);
 		debugPrint("%s", tmp);
 	}
+}
+
+
+static struct cansid_state cansid_init(void)
+{
+	struct cansid_state rv = {
+		.state = CANSID_ESC,
+		.style = 0x0F,
+		.next_style = 0x0F
+	};
+	return rv;
+}
+
+static inline unsigned char cansid_convert_color(unsigned char color)
+{
+	const unsigned char lookup_table[8] = { 0, 4, 2, 6, 1, 5, 3, 7 };
+	return lookup_table[(int)color];
+}
+
+static struct color_char cansid_process(struct cansid_state *state, char x)
+{
+	struct color_char rv = {
+		.style = state->style,
+		.ascii = '\0'
+	};
+	switch (state->state) {
+		case CANSID_ESC:
+			if (x == ESC)
+				state->state = CANSID_BRACKET;
+			else {
+				rv.ascii = x;
+			}
+			break;
+		case CANSID_BRACKET:
+			if (x == '[')
+				state->state = CANSID_PARSE;
+			else {
+				state->state = CANSID_ESC;
+				rv.ascii = x;
+			}
+			break;
+		case CANSID_PARSE:
+			if (x == '3') {
+				state->state = CANSID_FGCOLOR;
+			} else if (x == '4') {
+				state->state = CANSID_BGCOLOR;
+			} else if (x == '0') {
+				state->state = CANSID_ENDVAL;
+				state->next_style = 0x0F;
+			} else if (x == '1') {
+				state->state = CANSID_ENDVAL;
+				state->next_style |= (1 << 3);
+			} else if (x == '=') {
+				state->state = CANSID_EQUALS;
+			} else {
+				state->state = CANSID_ESC;
+				state->next_style = state->style;
+				rv.ascii = x;
+			}
+			break;
+		case CANSID_BGCOLOR:
+			if (x >= '0' && x <= '7') {
+				state->state = CANSID_ENDVAL;
+				state->next_style &= 0x1F;
+				state->next_style |= cansid_convert_color(x - '0') << 4;
+			} else {
+				state->state = CANSID_ESC;
+				state->next_style = state->style;
+				rv.ascii = x;
+			}
+			break;
+		case CANSID_FGCOLOR:
+			if (x >= '0' && x <= '7') {
+				state->state = CANSID_ENDVAL;
+				state->next_style &= 0xF8;
+				state->next_style |= cansid_convert_color(x - '0');
+			} else {
+				state->state = CANSID_ESC;
+				state->next_style = state->style;
+				rv.ascii = x;
+			}
+			break;
+		case CANSID_EQUALS:
+			if (x == '1') {
+				state->state = CANSID_ENDVAL;
+				state->next_style &= ~(1 << 3);
+			} else {
+				state->state = CANSID_ESC;
+				state->next_style = state->style;
+				rv.ascii = x;
+			}
+			break;
+		case CANSID_ENDVAL:
+			if (x == ';') {
+				state->state = CANSID_PARSE;
+			} else if (x == 'm') {
+				// Finish and apply styles
+				state->state = CANSID_ESC;
+				state->style = state->next_style;
+			} else {
+				state->state = CANSID_ESC;
+				state->next_style = state->style;
+				rv.ascii = x;
+			}
+			break;
+		default:
+			break;
+	}
+	return rv;
+}
+
+static uint32_t ansi_color_to_rgb(uint8_t colour_nibble)
+{
+	int pixelSize = (SCREEN_BPP + 7) / 8;
+
+	// RGB888 Colors
+	static const uint32_t rgb888_colors[] = {
+		0x000000, // Black
+		0x0000AA, // Blue
+		0x00AA00, // Green
+		0x00AAAA, // Cyan
+		0xAA0000, // Red
+		0xAA00AA, // Magenta
+		0xAA5500, // Brown
+		0xAAAAAA, // Light Gray
+		0x555555, // Dark Gray
+		0x5555FF, // Light Blue
+		0x55FF55, // Light Green
+		0x55FFFF, // Light Cyan
+		0xFF5555, // Light Red
+		0xFF55FF, // Light Magenta
+		0xFFFF00, // Yellow
+		0xFFFFFF  // White
+	};
+
+	// RGB565 Colors
+	#define PACK_RGB565(rgb888) (((((rgb888 >> 16 & 0xFF)) >> 3) << 11) | (((rgb888 >> 8 & 0xFF) >> 2) << 5) | ((rgb888 >> 0 & 0xFF) >> 3))
+	static const uint16_t rgb565_colors[] = {
+		0x0000, 0x0014, 0x0540, 0x0554, 0xa000, 0xa014, 0xa2a0, 0xa554, 0x52aa, 0x52bf, 0x57ea, 0x57ff, 0xfaaa, 0xfabf, 0xffe0, 0xffff
+	};
+
+	if (colour_nibble > 15)
+	{
+		return (pixelSize == 2) ? 0xFFFF : 0x00FFFFFF;
+	}
+
+	uint32_t c = (pixelSize == 2) ? rgb565_colors[colour_nibble] : rgb888_colors[colour_nibble];
+	return  c;
 }
