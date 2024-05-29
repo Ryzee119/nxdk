@@ -30,6 +30,8 @@
 #define LINK_SPEED_OF_YOUR_NETIF_IN_BPS 100 * 1000 * 1000 /* 100 Mbps */
 
 static struct netif *g_pnetif;
+static sys_mbox_t rx_mbox;
+
 /**
  * Helper struct to hold private data used to operate your ethernet interface.
  * Keeping the ethernet address of the MAC in this struct is not necessary
@@ -51,34 +53,58 @@ struct nforceif
 typedef struct
 {
     struct pbuf_custom p;
-    void *buff;
+    uint8_t *buffer;
+    uint16_t length;
 } rx_pbuf_t;
 
 LWIP_MEMPOOL_DECLARE(RX_POOL, RX_BUFF_CNT, sizeof(rx_pbuf_t), "Zero-copy RX PBUF pool");
-void rx_pbuf_free_callback (struct pbuf *p)
+static void rx_pbuf_free_callback (struct pbuf *p)
 {
     rx_pbuf_t *rx_pbuf = (rx_pbuf_t *)p;
-    nvnetdrv_rx_release(rx_pbuf->buff);
+    nvnetdrv_rx_release(rx_pbuf->buffer);
     LWIP_MEMPOOL_FREE(RX_POOL, rx_pbuf);
 }
 
-void rx_callback (void *buffer, uint16_t length)
+static void rx_callback_handler (void *arg)
+{
+    LWIP_UNUSED_ARG(arg);
+
+    while (1) {
+        rx_pbuf_t *rx_pbuf;
+        sys_arch_mbox_fetch(&rx_mbox, (void **)&rx_pbuf, 0);
+        struct pbuf *p = pbuf_alloced_custom(PBUF_RAW,
+                                             rx_pbuf->length + ETH_PAD_SIZE,
+                                             PBUF_REF,
+                                             &rx_pbuf->p,
+                                             rx_pbuf->buffer - ETH_PAD_SIZE,
+                                             NVNET_RX_BUFF_LEN - ETH_PAD_SIZE);
+
+        rx_pbuf->p.custom_free_function = rx_pbuf_free_callback;
+
+        if (g_pnetif->input(p, g_pnetif) != ERR_OK) {
+            pbuf_free(p);
+            nvnetdrv_rx_release(rx_pbuf->buffer);
+        }
+    }
+}
+
+// This callback is from the hardware IRQ, we post to a mailbox and handle it in a separate worker
+// thread to push into the lwip stack
+static void rx_callback (void *buffer, uint16_t length)
 {
     rx_pbuf_t *rx_pbuf = (rx_pbuf_t *)LWIP_MEMPOOL_ALLOC(RX_POOL);
-    LWIP_ASSERT("RX_POOL full\n", rx_pbuf != NULL);
-    rx_pbuf->p.custom_free_function = rx_pbuf_free_callback;
-    rx_pbuf->buff = buffer;
-    struct pbuf *p = pbuf_alloced_custom(PBUF_RAW,
-                                         length + ETH_PAD_SIZE,
-                                         PBUF_REF,
-                                         &rx_pbuf->p,
-                                         buffer - ETH_PAD_SIZE,
-                                         NVNET_RX_BUFF_LEN - ETH_PAD_SIZE);
 
-    if (g_pnetif->input(p, g_pnetif) != ERR_OK) {
-        pbuf_free(p);
-        nvnetdrv_rx_release(buffer);
+    assert(rx_pbuf != NULL);
+    if (rx_pbuf == NULL) {
+        return;
     }
+
+    rx_pbuf->buffer = buffer;
+    rx_pbuf->length = length;
+
+    // Post it, this should always succeed as mbox size matches rx ring size
+    err_t res = sys_mbox_trypost_fromisr(&rx_mbox, (void *)rx_pbuf);
+    assert(res == ERR_OK);
 }
 
 /**
@@ -92,6 +118,10 @@ void rx_callback (void *buffer, uint16_t length)
  */
 static err_t low_level_init (struct netif *netif)
 {
+    sys_mbox_new(&rx_mbox, RX_BUFF_CNT);
+    sys_thread_new("rx_thread", rx_callback_handler, NULL,
+                   DEFAULT_THREAD_STACKSIZE, DEFAULT_THREAD_PRIO);
+
     if (nvnetdrv_init(RX_BUFF_CNT, rx_callback, PBUF_POOL_SIZE) < 0) {
         return ERR_IF;
     }
