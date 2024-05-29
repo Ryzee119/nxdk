@@ -76,41 +76,48 @@ static KINTERRUPT g_interrupt;
 static HANDLE g_irqThread;
 static KEVENT g_irqEvent;
 
-// Manage RX ring
-static volatile struct descriptor_t *g_rxRing;
-static KSEMAPHORE g_rxRingFreeDescriptors;
-static HANDLE g_rxRingRequeueThread;
+// Manage RX and TX rings
+static struct descriptor_t *g_rxRing;
+static struct descriptor_t *g_txRing;
+static size_t g_rxRingSize;
+static size_t g_txRingSize;
 static size_t g_rxRingHead;
-static size_t g_rxRingTail;
+static size_t g_txRingHead;
+static atomic_size_t g_txPendingCount;
+static atomic_size_t g_rxPendingCount;
+static atomic_size_t g_rxRingTail;
+static atomic_size_t g_txRingTail;
+static KSEMAPHORE g_txRingFreeCount;
+struct tx_misc_t g_txData[TX_RING_SIZE];
 static uint8_t *g_rxRingUserBuffers;
 static uint32_t g_rxRingBufferVtoP;
 
-// Manage RX buffer callbacks to user network stack
+// Manage RX buffers
+static KSEMAPHORE g_rxRingFreeDescriptors;
+static HANDLE g_rxRingRequeueThread;
 static nvnetdrv_rx_callback_t g_rxCallback;
-static KSEMAPHORE g_rxPendingCount;
 static HANDLE g_rxCallbackThread;
 struct rx_misc_t *g_rxCallbackQueue;
 static size_t g_rxCallbackTail;
-
-// Manage RX buffer pool to supply RX ring
 static void **g_rxBuffPool;
 static size_t g_rxBuffPoolHead;
-static size_t g_rxRingSize;
 static RTL_CRITICAL_SECTION g_rxBuffPoolLock;
 static KSEMAPHORE g_rxFreeBuffers;
-
-// Manage TX ring
-static volatile struct descriptor_t *g_txRing;
-static size_t g_txRingHead;
-static atomic_size_t g_txRingTail;
-static atomic_size_t g_txPendingCount;
-static KSEMAPHORE g_txRingFreeCount;
-struct tx_misc_t g_txData[TX_RING_SIZE];
 
 // Time constants used in nvnetdrv
 #define NO_SLEEP &(LARGE_INTEGER){.QuadPart = 0}
 #define TEN_MICRO &(LARGE_INTEGER){.QuadPart = -100}
 #define FIFTY_MICRO &(LARGE_INTEGER){.QuadPart = -500}
+
+static inline uint32_t nvnetdrv_rx_ptov (uint32_t phys_address)
+{
+    return (phys_address == 0) ? 0 : (phys_address + g_rxRingBufferVtoP);
+}
+
+static inline uint32_t nvnetdrv_rx_vtop (uint32_t virt_address)
+{
+    return (virt_address == 0) ? 0 : (virt_address - g_rxRingBufferVtoP);
+}
 
 static void nvnetdrv_rx_push (void *buffer_virt)
 {
@@ -150,16 +157,6 @@ static BOOLEAN NTAPI nvnetdrv_isr (PKINTERRUPT Interrupt, PVOID ServiceContext)
 static void NTAPI nvnetdrv_dpc (PKDPC Dpc, PVOID DeferredContext, PVOID arg1, PVOID arg2)
 {
     KeSetEvent(&g_irqEvent, IO_NETWORK_INCREMENT, FALSE);
-}
-
-static inline uint32_t nvnetdrv_rx_ptov (uint32_t phys_address)
-{
-    return (phys_address == 0) ? 0 : (phys_address + g_rxRingBufferVtoP);
-}
-
-static inline uint32_t nvnetdrv_rx_vtop (uint32_t virt_address)
-{
-    return (virt_address == 0) ? 0 : (virt_address - g_rxRingBufferVtoP);
 }
 
 static void nvnetdrv_rx_requeue (size_t buffer_index)
