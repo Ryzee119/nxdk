@@ -21,9 +21,11 @@
 #include <xboxkrnl/xboxkrnl.h>
 
 /* Define those to better describe your network interface. */
-#define IFNAME0     'x'
-#define IFNAME1     'b'
-#define RX_BUFF_CNT (RX_RING_SIZE)
+#define IFNAME0 'x'
+#define IFNAME1 'b'
+#ifndef RX_BUFF_CNT
+#define RX_BUFF_CNT (64)
+#endif
 
 #define LINK_SPEED_OF_YOUR_NETIF_IN_BPS 100 * 1000 * 1000 /* 100 Mbps */
 
@@ -90,7 +92,7 @@ void rx_callback (void *buffer, uint16_t length)
  */
 static err_t low_level_init (struct netif *netif)
 {
-    if (nvnetdrv_init(RX_BUFF_CNT, rx_callback) < 0) {
+    if (nvnetdrv_init(RX_BUFF_CNT, rx_callback, PBUF_POOL_SIZE) < 0) {
         return ERR_IF;
     }
 
