@@ -186,7 +186,7 @@ static void nvnetdrv_handle_rx_irq (void)
             goto release_packet;
         }
 
-        if (!(flags & NV_RX_ERROR) || (flags & NV_RX_FRAMINGERR)) {
+        if (!(flags & NV_RX_ERROR) || ((flags & NV_RX_ERROR_MASK)) = NV_RX_FRAMINGERR)) {
             uint16_t packet_length = rx_packet->length;
 
             if (flags & NV_RX_SUBTRACT1) {
