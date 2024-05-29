@@ -79,36 +79,33 @@ static KINTERRUPT g_interrupt;
 static HANDLE g_irqThread;
 static KEVENT g_irqEvent;
 
-// Manage RX ring
-static volatile struct descriptor_t *g_rxRing;
-static KSEMAPHORE g_rxRingFreeDescriptors;
-static HANDLE g_rxRingRequeueThread;
+// Manage RX and TX rings
+static struct descriptor_t *g_rxRing;
+static struct descriptor_t *g_txRing;
+static size_t g_rxRingSize;
+static size_t g_txRingSize;
 static size_t g_rxRingHead;
-static size_t g_rxRingTail;
+static size_t g_txRingHead;
+static atomic_size_t g_txPendingCount;
+static atomic_size_t g_rxPendingCount;
+static atomic_size_t g_rxRingTail;
+static atomic_size_t g_txRingTail;
+static KSEMAPHORE g_txRingFreeCount;
+struct tx_misc_t g_txData[TX_RING_SIZE];
 static uint8_t *g_rxRingUserBuffers;
 static uint32_t g_rxRingBufferVtoP;
 
-// Manage RX buffer callbacks to user network stack
+// Manage RX buffers
+static KSEMAPHORE g_rxRingFreeDescriptors;
+static HANDLE g_rxRingRequeueThread;
 static nvnetdrv_rx_callback_t g_rxCallback;
-static KSEMAPHORE g_rxPendingCount;
 static HANDLE g_rxCallbackThread;
 struct rx_misc_t *g_rxCallbackQueue;
 static size_t g_rxCallbackTail;
-
-// Manage RX buffer pool to supply RX ring
 static void **g_rxBuffPool;
 static size_t g_rxBuffPoolHead;
-static size_t g_rxRingSize;
 static RTL_CRITICAL_SECTION g_rxBuffPoolLock;
 static KSEMAPHORE g_rxFreeBuffers;
-
-// Manage TX ring
-static volatile struct descriptor_t *g_txRing;
-static size_t g_txRingHead;
-static atomic_size_t g_txRingTail;
-static atomic_size_t g_txPendingCount;
-static KSEMAPHORE g_txRingFreeCount;
-struct tx_misc_t g_txData[TX_RING_SIZE];
 
 // Time constants used in nvnetdrv
 #define NO_SLEEP      \
