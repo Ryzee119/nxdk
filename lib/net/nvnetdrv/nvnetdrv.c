@@ -339,22 +339,20 @@ int nvnetdrv_init (size_t rx_buffer_count, nvnetdrv_rx_callback_t rx_callback, s
     KeDelayExecutionThread(KernelMode, FALSE, TEN_MICRO);
     reg32(NvRegTxRxControl) = 0;
     KeDelayExecutionThread(KernelMode, FALSE, TEN_MICRO);
-
-    // Disable interrupts while we initialise the NIC
-    reg32(NvRegIrqMask) = 0;
     reg32(NvRegMIIMask) = 0;
+    reg32(NvRegIrqMask) = 0;
+    reg32(NvRegWakeUpFlags) = 0;
+    reg32(NvRegPollingControl) = 0;
+    reg32(NvRegTxRingPhysAddr) = 0;
+    reg32(NvRegRxRingPhysAddr) = 0;
+    reg32(NvRegTransmitPoll) = 0;
+    reg32(NvRegLinkSpeed) = 0;
 
     // Acknowledge any existing interrupts status bits
     reg32(NvRegTransmitterStatus) = reg32(NvRegTransmitterStatus);
     reg32(NvRegReceiverStatus) = reg32(NvRegReceiverStatus);
     reg32(NvRegIrqStatus) = reg32(NvRegIrqStatus);
     reg32(NvRegMIIStatus) = reg32(NvRegMIIStatus);
-
-    // Clear latent registers
-    reg32(NvRegWakeUpFlags) = 0;
-    reg32(NvRegPollingControl) = 0;
-    reg32(NvRegTransmitPoll) = 0;
-    reg32(NvRegLinkSpeed) = 0;
 
     // Reset local ring tracking variables
     g_rxRingHead = 0;
@@ -387,14 +385,14 @@ int nvnetdrv_init (size_t rx_buffer_count, nvnetdrv_rx_callback_t rx_callback, s
     reg32(NvRegTxDeferral) = NVREG_TX_DEFERRAL_RGMII_10_100;
     reg32(NvRegRxDeferral) = NVREG_RX_DEFERRAL_DEFAULT;
 
-    // MS Dash does this and sets up both these registers with 0x300010)
-    reg32(NvRegUnknownSetupReg7) = NVREG_UNKSETUP7_VAL1;  // RxWatermark?
-    reg32(NvRegTxWatermark) = NVREG_UNKSETUP7_VAL1;
-
     // Point the NIC to our TX and RX ring buffers. NIC expects Ring size as size-1.
     reg32(NvRegTxRingPhysAddr) = MmGetPhysicalAddress((void *)g_txRing);
     reg32(NvRegRxRingPhysAddr) = MmGetPhysicalAddress((void *)g_rxRing);
     reg32(NvRegRingSizes) = ((g_rxRingSize - 1) << NVREG_RINGSZ_RXSHIFT) | ((g_txRingSize - 1) << NVREG_RINGSZ_TXSHIFT);
+
+    // MS Dash does this and sets up both these registers with 0x300010)
+    reg32(NvRegUnknownSetupReg7) = NVREG_UNKSETUP7_VAL1;  // RxWatermark?
+    reg32(NvRegTxWatermark) = NVREG_UNKSETUP7_VAL1;
 
     // Prepare for Phy Init
     reg32(NvRegAdapterControl) = (1 << NVREG_ADAPTCTL_PHYSHIFT) | NVREG_ADAPTCTL_PHYVALID;
@@ -431,6 +429,12 @@ int nvnetdrv_init (size_t rx_buffer_count, nvnetdrv_rx_callback_t rx_callback, s
     // Get link speed settings from Phy
     nvnetdrv_handle_mii_irq(0, true);
 
+    // Start getting and sending data
+    nvnetdrv_start_txrx();
+
+    reg32(NvRegMIIMask) = NVREG_MII_LINKCHANGE;
+    nvnetdrv_irq_enable();
+
     // Set running flag. This needs to happen before we connect the irq and start threads.
     bool prev_value = atomic_exchange(&g_running, true);
     assert(!prev_value);
@@ -444,11 +448,6 @@ int nvnetdrv_init (size_t rx_buffer_count, nvnetdrv_rx_callback_t rx_callback, s
         nvnetdrv_stop();
         return NVNET_SYS_ERR;
     }
-
-    // Start getting and sending data
-    nvnetdrv_irq_enable();
-    nvnetdrv_start_txrx();
-
     return NVNET_OK;
 }
 
@@ -503,15 +502,16 @@ void nvnetdrv_stop (void)
 void nvnetdrv_start_txrx (void)
 {
     reg32(NvRegLinkSpeed) = g_linkSpeed | NVREG_LINKSPEED_FORCE;
-    reg32(NvRegTransmitterControl) |= NVREG_XMITCTL_START;
-    reg32(NvRegReceiverControl) |= NVREG_RCVCTL_START;
+    reg32(NvRegTransmitterControl) = NVREG_XMITCTL_START;
+    reg32(NvRegReceiverControl) = NVREG_RCVCTL_START;
     reg32(NvRegTxRxControl) = NVREG_TXRXCTL_KICK | NVREG_TXRXCTL_GET;
 }
 
 void nvnetdrv_stop_txrx (void)
 {
-    reg32(NvRegReceiverControl) &= ~NVREG_RCVCTL_START;
-    reg32(NvRegTransmitterControl) &= ~NVREG_XMITCTL_START;
+    reg32(NvRegLinkSpeed) = 0;
+    reg32(NvRegReceiverControl) = 0;
+    reg32(NvRegTransmitterControl) = 0;
 
     // Wait for active TX and RX descriptors to finish
     for (int i = 0; i < 50000; i++) {
@@ -522,8 +522,15 @@ void nvnetdrv_stop_txrx (void)
         KeDelayExecutionThread(KernelMode, FALSE, TEN_MICRO);
     }
 
-    reg32(NvRegLinkSpeed) = 0;
-    reg32(NvRegTransmitPoll) = 0;
+    reg32(NvRegTxRxControl) = NVREG_TXRXCTL_DISABLE;
+
+    for (int i = 0; i < 50000; i++) {
+        if ((reg32(NvRegTxRxControl) & NVREG_TXRXCTL_IDLE) != 0) {
+            break;
+        }
+        KeDelayExecutionThread(KernelMode, FALSE, TEN_MICRO);
+    }
+    reg32(NvRegTxRxControl) = 0;
 }
 
 int nvnetdrv_acquire_tx_descriptors (size_t count)
@@ -615,5 +622,4 @@ void nvnetdrv_rx_release (void *buffer_virt)
     g_rxRing[index].paddr = nvnetdrv_rx_vtop((uint32_t)buffer_virt);
     g_rxRing[index].length = NVNET_RX_BUFF_LEN;
     g_rxRing[index].flags = NV_RX_AVAIL;
-    reg32(NvRegTxRxControl) = NVREG_TXRXCTL_GET;
 }
