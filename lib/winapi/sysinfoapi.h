@@ -20,9 +20,8 @@ void GetLocalTime (LPSYSTEMTIME lpSystemTime);
 // Unprovided fields are intentionally disabled to catch code trying to access them
 typedef struct _SYSTEM_INFO
 {
-    union
-    {
-        //DWORD dwOemId;
+    union {
+        // DWORD dwOemId;
         struct
         {
             WORD wProcessorArchitecture;
@@ -30,14 +29,14 @@ typedef struct _SYSTEM_INFO
         } DUMMYSTRUCTNAME;
     } DUMMYUNIONNAME;
     DWORD dwPageSize;
-    //LPVOID lpMinimumApplicationAddress;
-    //LPVOID lpMaximumApplicationAddress;
+    // LPVOID lpMinimumApplicationAddress;
+    // LPVOID lpMaximumApplicationAddress;
     DWORD_PTR dwActiveProcessorMask;
     DWORD dwNumberOfProcessors;
-    //DWORD dwProcessorType;
+    // DWORD dwProcessorType;
     DWORD dwAllocationGranularity;
-    //WORD wProcessorLevel;
-    //WORD wProcessorRevision;
+    // WORD wProcessorLevel;
+    // WORD wProcessorRevision;
 } SYSTEM_INFO, *LPSYSTEM_INFO;
 
 #define PROCESSOR_ARCHITECTURE_INTEL 0

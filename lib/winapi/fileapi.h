@@ -11,8 +11,7 @@
 #include <winnt.h>
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
 DWORD GetFileAttributesA (LPCSTR lpFileName);

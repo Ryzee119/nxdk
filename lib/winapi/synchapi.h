@@ -34,7 +34,6 @@ VOID WakeAllConditionVariable (PCONDITION_VARIABLE ConditionVariable);
 // UninitializeConditionVariable is an nxdk extension to free associated system resources
 VOID UninitializeConditionVariable (PCONDITION_VARIABLE ConditionVariable);
 
-
 void AcquireSRWLockExclusive (PSRWLOCK SRWLock);
 void AcquireSRWLockShared (PSRWLOCK SRWLock);
 void InitializeSRWLock (PSRWLOCK SRWLock);

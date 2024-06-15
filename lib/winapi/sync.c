@@ -267,7 +267,7 @@ BOOL InitOnceComplete (LPINIT_ONCE lpInitOnce, DWORD dwFlags, LPVOID lpContext)
                 // init done, waiters continue because they were spinning in InitOnceBeginInitialize
                 return TRUE;
             case INITONCE_ASYNC_IN_PROGRESS:
-                if(!(dwFlags & INIT_ONCE_ASYNC)) {
+                if (!(dwFlags & INIT_ONCE_ASYNC)) {
                     SetLastError(ERROR_INVALID_PARAMETER);
                     return FALSE;
                 }
@@ -453,7 +453,8 @@ DWORD WaitForSingleObjectEx (HANDLE hHandle, DWORD dwMilliseconds, BOOL bAlertab
     while (true) {
         NTSTATUS status = NtWaitForSingleObjectEx(hHandle, UserMode, bAlertable, &duration);
 
-        if (status == STATUS_ALERTED) continue;
+        if (status == STATUS_ALERTED)
+            continue;
 
         if (!NT_SUCCESS(status)) {
             SetLastError(RtlNtStatusToDosError(status));
@@ -477,7 +478,8 @@ DWORD WaitForMultipleObjectsEx (DWORD nCount, const HANDLE *lpHandles, BOOL bWai
     while (true) {
         NTSTATUS status = NtWaitForMultipleObjectsEx(nCount, lpHandles, bWaitAll ? WaitAll : WaitAny, UserMode, bAlertable, &duration);
 
-        if (status == STATUS_ALERTED) continue;
+        if (status == STATUS_ALERTED)
+            continue;
 
         if (!NT_SUCCESS(status)) {
             SetLastError(RtlNtStatusToDosError(status));

@@ -10,10 +10,11 @@
 #include <winerror.h>
 #include <fileapi.h>
 
-struct FileInfo {
+struct FileInfo
+{
     FILE_DIRECTORY_INFORMATION dirInfo;
     // Reserve path buffer minus the null-terminator and the first byte provided by dirInfo
-    char filename[MAX_PATH-2];
+    char filename[MAX_PATH - 2];
 };
 
 static void dirtofind (FILE_DIRECTORY_INFORMATION *dirInfo, LPWIN32_FIND_DATAA lpFindFileData)
@@ -21,9 +22,9 @@ static void dirtofind (FILE_DIRECTORY_INFORMATION *dirInfo, LPWIN32_FIND_DATAA l
     lpFindFileData->dwFileAttributes = dirInfo->FileAttributes;
     lpFindFileData->ftCreationTime.dwLowDateTime = dirInfo->CreationTime.LowPart;
     lpFindFileData->ftCreationTime.dwHighDateTime = dirInfo->CreationTime.HighPart;
-    lpFindFileData->ftLastAccessTime.dwLowDateTime  = dirInfo->LastAccessTime.LowPart;
+    lpFindFileData->ftLastAccessTime.dwLowDateTime = dirInfo->LastAccessTime.LowPart;
     lpFindFileData->ftLastAccessTime.dwHighDateTime = dirInfo->LastAccessTime.HighPart;
-    lpFindFileData->ftLastWriteTime.dwLowDateTime  = dirInfo->LastWriteTime.LowPart;
+    lpFindFileData->ftLastWriteTime.dwLowDateTime = dirInfo->LastWriteTime.LowPart;
     lpFindFileData->ftLastWriteTime.dwHighDateTime = dirInfo->LastWriteTime.HighPart;
     lpFindFileData->nFileSizeHigh = dirInfo->EndOfFile.HighPart;
     lpFindFileData->nFileSizeLow = dirInfo->EndOfFile.LowPart;

@@ -16,7 +16,8 @@ extern "C" {
 #define TIME_ZONE_ID_DAYLIGHT 2
 #define TIME_ZONE_ID_INVALID ((DWORD)0xFFFFFFFF)
 
-typedef struct _TIME_ZONE_INFORMATION {
+typedef struct _TIME_ZONE_INFORMATION
+{
     LONG Bias;
     WCHAR StandardName[32];
     SYSTEMTIME StandardDate;

@@ -10,8 +10,8 @@
 
 typedef struct
 {
-    UCHAR Month;     // 1-12, a 0 indicates there is no timezone information
-    UCHAR Day;       // 1 = 1st occurrence of DayOfWeek up to 5 (5th or last)
+    UCHAR Month; // 1-12, a 0 indicates there is no timezone information
+    UCHAR Day; // 1 = 1st occurrence of DayOfWeek up to 5 (5th or last)
     UCHAR DayOfWeek; // 0 = Sunday to 6 = Saturday
     UCHAR Hour;
 } XBOX_TZ_STRUCT;
@@ -20,8 +20,10 @@ typedef struct
 // https://en.wikipedia.org/wiki/Determination_of_the_day_of_the_week#Methods_in_computer_code
 static UCHAR GetDayOfWeek (SHORT year, UCHAR month, UCHAR day)
 {
+    // clang-format off
     return (day += month < 3 ? year-- : year - 2, 23 *
             month / 9 + day + 4 + year / 4 - year / 100 + year / 400) % 7;
+    // clang-format on
 }
 
 static UCHAR GetDaysInMonth (SHORT year, UCHAR month)
@@ -192,7 +194,7 @@ DWORD GetTimeZoneInformation (LPTIME_ZONE_INFORMATION lpTimeZoneInformation)
 
     // Now that month wrapping is fixed, we convert the dates to minutes from the start of the year corresponding to daylightStartDate
     // The conversion to minutes allows for easier comparison. The minute resolution allows for timezones with 0.5 hour offsets.
-    const LONG mpd = 24 * 60;  // Minutes per day
+    const LONG mpd = 24 * 60; // Minutes per day
     const LONG mpm = 31 * mpd; // Minutes per month. 31 is ok providing it's consistent
     timeNow = (dateNow.Month * mpm) + (dateNow.Day * mpd) + (dateNow.Hour * 60) + dateNow.Minute;
     // DST change overs happen in local time, so we need to add the respective biases too

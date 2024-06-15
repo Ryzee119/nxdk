@@ -239,14 +239,14 @@ typedef struct _IMAGE_TLS_DIRECTORY32
     DWORD SizeOfZeroFill;
     union {
         DWORD Characteristics;
-        struct {
+        struct
+        {
             DWORD Reserved0 : 20;
             DWORD Alignment : 4;
             DWORD Reserved1 : 8;
         };
     };
 } IMAGE_TLS_DIRECTORY_32, *PIMAGE_TLS_DIRECTORY_32;
-
 
 // The XBE_ prefixed functionality is an nxdk-specific extension, and not usually found in winnt.h
 
@@ -264,7 +264,7 @@ typedef struct _XBE_CERTIFICATE_HEADER
     DWORD Version;
     BYTE LANKey[16];
     BYTE SignatureKey[16];
-    BYTE AlternateSignatureKeys[16*16];
+    BYTE AlternateSignatureKeys[16 * 16];
 } XBE_CERTIFICATE_HEADER, *PXBE_CERTIFICATE_HEADER;
 
 typedef struct _XBE_LIBRARY_HEADER
