@@ -1,0 +1,21 @@
+BasedOnStyle: Microsoft
+ColumnLimit: 0
+SortIncludes: false
+IndentCaseLabels: true
+AlignTrailingComments: false
+
+SpaceBeforeParens: Custom
+SpaceBeforeParensOptions:
+  AfterControlStatements: true
+  AfterFunctionDefinitionName: true
+  AfterFunctionDeclarationName: true
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterControlStatement: false
+  AfterExternBlock: false
+  BeforeElse: false
+  AfterUnion: false
+
+Macros:
+- VOID=void
