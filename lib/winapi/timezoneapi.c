@@ -2,11 +2,11 @@
 
 // SPDX-FileCopyrightText: 2023 Ryan Wendland
 
+#include <assert.h>
+#include <string.h>
 #include <timezoneapi.h>
 #include <winbase.h>
-#include <assert.h>
 #include <xboxkrnl/xboxkrnl.h>
-#include <string.h>
 
 typedef struct
 {
@@ -21,7 +21,9 @@ typedef struct
 static UCHAR GetDayOfWeek (SHORT year, UCHAR month, UCHAR day)
 {
     return (day += month < 3 ? year-- : year - 2, 23 *
-            month / 9 + day + 4 + year / 4 - year / 100 + year / 400) % 7;
+                                                          month / 9 +
+                                                      day + 4 + year / 4 - year / 100 + year / 400) %
+           7;
 }
 
 static UCHAR GetDaysInMonth (SHORT year, UCHAR month)
