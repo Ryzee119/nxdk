@@ -2,6 +2,7 @@
 
 // SPDX-FileCopyrightText: 2022 Stefan Schmidt
 // SPDX-FileCopyrightText: 2022 Ryan Wendland
+// SPDX-FileCopyrightText: 2024 Dustin Holden
 
 #include "nvnetdrv.h"
 #include "nvnetdrv_regs.h"
@@ -11,23 +12,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <xboxkrnl/xboxkrnl.h>
+#include <lwip/pbuf.h>
 
 #define NVNET_RX_EMPTY (NULL)
 
 struct __attribute__((packed)) descriptor_t
 {
     uint32_t paddr;
+    // TODO: Is it safe to set these seperately?
     uint16_t length;
     uint16_t flags;
-};
-
-// Struct to hold user TX callback data
-struct tx_misc_t
-{
-    void *bufAddr;
-    size_t length;
-    nvnetdrv_tx_callback_t callback;
-    void *userdata;
 };
 
 #ifdef NVNETDRV_ENABLE_STATS
@@ -68,20 +62,27 @@ static KINTERRUPT g_interrupt;
 static HANDLE g_irqThread;
 static KEVENT g_irqEvent;
 
-// Manage RX and TX rings
+// Manage RX rings
 static struct descriptor_t *g_rxRing;
-static struct descriptor_t *g_txRing;
 static size_t g_rxRingSize;
-static size_t g_txRingSize;
 static size_t g_rxRingHead;
-static size_t g_txRingHead;
-static atomic_size_t g_txPendingCount;
 static atomic_size_t g_rxRingTail;
-static atomic_size_t g_txRingTail;
-static KSEMAPHORE g_txRingFreeCount;
-struct tx_misc_t *g_txData;
 static uint8_t *g_rxRingUserBuffers;
 static uint32_t g_rxRingBufferVtoP;
+
+// TX packet queue
+static LIST_ENTRY nvnetdrv_tx_queue;
+
+// Manage TX rings
+// We using a circular buffer for the TX ring, but we're also tracking the
+// current busy and free descriptors to make it easier/quicker (perf) to manage.
+static bool                  g_tx_full;
+static size_t                g_tx_busy;
+static size_t                g_tx_size;
+static struct descriptor_t * g_tx_desc_first;
+static struct descriptor_t * g_tx_desc_last;
+static struct descriptor_t * g_tx_desc_busy;
+static struct descriptor_t * g_tx_desc_free;
 
 // Manage RX buffer callbacks to user network stack
 static nvnetdrv_rx_callback_t g_rxCallback;
@@ -181,33 +182,66 @@ static void nvnetdrv_handle_rx_irq (void)
 
 static void nvnetdrv_handle_tx_irq (void)
 {
-    LONG freed_descriptors = 0;
-
-    while (g_txPendingCount > 0) {
-        uint16_t flags = g_txRing[g_txRingHead].flags;
-
-        if (flags & NV_TX_VALID) {
-            // We reached a descriptor that wasn't processed by hw yet
-            // Re-init the transfer to ensure the NIC sends it
-            reg32(NvRegTxRxControl) = NVREG_TXRXCTL_KICK;
+    while (1) {
+        // If the transmit queue is empty, we're done.
+        if(IsListEmpty(&nvnetdrv_tx_queue))
             break;
+
+        // Get the first packet in the transmit queue.
+        // NOTE: We're not removing the packet from the queue yet since we need
+        // to check if it was sent.
+        struct pbuf *p = (struct pbuf *)CONTAINING_RECORD(nvnetdrv_tx_queue.Flink, struct pbuf, ListEntry);
+
+        // Get the packet's descriptor.
+        struct descriptor_t *tx_packet = g_tx_desc_busy;
+
+        // Check if the descriptor is split.
+        if (p->flags & PBUF_FLAG_IS_DESCRIPTOR_SPLIT) {
+            // On a split descriptor, the first descriptor should not be marked as the last packet.
+            assert((tx_packet->flags & NV_TX_LASTPACKET) == 0);
+
+            // Move to the next descriptor in the chain.
+            tx_packet = (tx_packet == g_tx_desc_last ? g_tx_desc_first : (tx_packet + 1));
         }
+
+        // Packet should always be marked as last packet in the chain.
+        assert(tx_packet->flags & NV_TX_LASTPACKET);
+
+        // Check if we've reached a descriptor that wasn't processed by hw yet
+        if (tx_packet->flags & NV_TX_VALID)
+            break;
+
+        // Remove the packet from the transmit queue since it's been sent.
+        RemoveHeadList(&nvnetdrv_tx_queue);
+
+        // Update the busy descriptor pointer to the next descriptor in the chain.
+        g_tx_desc_busy = (tx_packet == g_tx_desc_last ? g_tx_desc_first : (tx_packet + 1));
+
+        // Update the number of busy descriptors.
+        // If this is a split descriptor, we need to decrement the count by 2.
+        g_tx_busy -= (p->flags & PBUF_FLAG_IS_DESCRIPTOR_SPLIT) ? 2 : 1;
 
         // Buffers get locked before sending and unlocked after sending
-        MmLockUnlockBufferPages(g_txData[g_txRingHead].bufAddr, g_txData[g_txRingHead].length, TRUE);
+        MmLockUnlockBufferPages(p->payload, p->len, TRUE);
+
+        // Clear the split flag since we're done with this descriptor.
+        // TODO: This probably isn't needed since we're removing the packet from the queue.
+        p->flags &= ~PBUF_FLAG_IS_DESCRIPTOR_SPLIT;
 
         // If registered, call the users tx complete callback funciton.
-        if (g_txData[g_txRingHead].callback) {
-            g_txData[g_txRingHead].callback(g_txData[g_txRingHead].userdata);
+        if (p->Complete) {
+            p->Complete(p);
         }
-
-        freed_descriptors++;
-        g_txRingHead = (g_txRingHead + 1) % g_txRingSize;
-        g_txPendingCount--;
     }
 
-    KeReleaseSemaphore(&g_txRingFreeCount, IO_NETWORK_INCREMENT, freed_descriptors, FALSE);
-    INC_STAT(tx_interrupts, 1);
+    // If the queue was previous full, then we need to check if can queue up more packets.
+    if (g_tx_full && g_tx_busy < g_tx_size) {
+        g_tx_full = FALSE;
+
+        nvnetif_tx_push(NULL, NULL, NULL, NULL);
+    }
+
+    // TODO: Re-implement INC_STAT(tx_interrupts, 1);
 }
 
 static void nvnetdrv_handle_mii_irq (uint32_t miiStatus, bool init)
@@ -245,7 +279,7 @@ static void nvnetdrv_handle_irq (void)
         uint32_t mii = reg32(NvRegMIIStatus);
 
         // No interrupts left to handle. Leave
-        if (!irq && !mii) break;
+        if (!irq) break;
 
         // We need to handle MII irq before acknowledging it to prevent link state IRQ occurring
         // during polling of the link state register
@@ -257,13 +291,16 @@ static void nvnetdrv_handle_irq (void)
         reg32(NvRegMIIStatus) = mii;
         reg32(NvRegIrqStatus) = irq;
 
-        // Handle TX/RX interrupts
+        // Handle RX interrupts
         if (irq & NVREG_IRQ_RX_ALL) {
             nvnetdrv_handle_rx_irq();
         }
-        if (irq & NVREG_IRQ_TX_ALL) {
-            nvnetdrv_handle_tx_irq();
-        }
+
+        // Handle TX interrupts
+        // NOTE: We need to always handle TX interrupts just in case we have
+        // more packets in that queue that need to be pushed to the NIC.
+        nvnetdrv_handle_tx_irq();
+
         if (irq & NVREG_IRQ_RX_NOBUF) {
             reg32(NvRegTxRxControl) = NVREG_TXRXCTL_GET;
         }
@@ -286,7 +323,17 @@ static void NTAPI irq_thread (PKSTART_ROUTINE StartRoutine, PVOID StartContext)
     PsTerminateSystemThread(0);
 }
 
-const uint8_t *nvnetdrv_get_ethernet_addr ()
+bool nvnetdrv_tx_ready (void)
+{
+    bool ready = g_tx_busy < g_tx_size;
+
+    if (!ready)
+        g_tx_full = true;
+
+    return ready;
+}
+
+const uint8_t *nvnetdrv_get_ethernet_addr (void)
 {
     return g_ethAddr;
 }
@@ -299,7 +346,10 @@ int nvnetdrv_init (size_t rx_buffer_count, nvnetdrv_rx_callback_t rx_callback, s
 
     g_rxCallback = rx_callback;
     g_rxRingSize = rx_buffer_count;
-    g_txRingSize = tx_queue_size;
+    g_tx_size    = tx_queue_size;
+
+    // Initialize our packet queue for TX packets
+    InitializeListHead(&nvnetdrv_tx_queue);
 
     // Get Mac Address from EEPROM
     ULONG type;
@@ -309,16 +359,9 @@ int nvnetdrv_init (size_t rx_buffer_count, nvnetdrv_rx_callback_t rx_callback, s
     }
 
     // Allocate memory for TX and RX ring descriptors.
-    void *descriptors = MmAllocateContiguousMemoryEx((g_rxRingSize + g_txRingSize) * sizeof(struct descriptor_t), 0,
+    void *descriptors = MmAllocateContiguousMemoryEx((g_rxRingSize + g_tx_size) * sizeof(struct descriptor_t), 0,
                                                      0xFFFFFFFF, 0, PAGE_READWRITE);
     if (!descriptors) {
-        return NVNET_NO_MEM;
-    }
-
-    // Allocate memory to store data associated with outgoing and incoming transfers
-    g_txData = malloc(g_txRingSize * sizeof(struct tx_misc_t));
-    if (!g_txData) {
-        MmFreeContiguousMemory(descriptors);
         return NVNET_NO_MEM;
     }
 
@@ -327,11 +370,10 @@ int nvnetdrv_init (size_t rx_buffer_count, nvnetdrv_rx_callback_t rx_callback, s
         MmAllocateContiguousMemoryEx(g_rxRingSize * NVNET_RX_BUFF_LEN, 0, 0xFFFFFFFF, 0, PAGE_READWRITE);
     if (!g_rxRingUserBuffers) {
         MmFreeContiguousMemory(descriptors);
-        free(g_txData);
         return NVNET_NO_MEM;
     }
 
-    RtlZeroMemory(descriptors, (g_rxRingSize + g_txRingSize) * sizeof(struct descriptor_t));
+    RtlZeroMemory(descriptors, (g_rxRingSize + g_tx_size) * sizeof(struct descriptor_t));
 
     // Reset NIC. MSDash delays 10us here
     nvnetdrv_stop_txrx();
@@ -354,17 +396,22 @@ int nvnetdrv_init (size_t rx_buffer_count, nvnetdrv_rx_callback_t rx_callback, s
     reg32(NvRegIrqStatus) = reg32(NvRegIrqStatus);
     reg32(NvRegMIIStatus) = reg32(NvRegMIIStatus);
 
-    // Reset local ring tracking variables
+    // Reset local rx ring tracking variables
     g_rxRingHead = 0;
     g_rxRingTail = 0;
-    g_txRingHead = 0;
-    g_txRingTail = 0;
-    g_txPendingCount = 0;
-    RtlZeroMemory(g_txData, sizeof(g_txData));
 
-    // Setup the TX and RX ring descriptor pointers
+    // Setup the RX ring descriptor pointers
     g_rxRing = (struct descriptor_t *)descriptors;
-    g_txRing = (struct descriptor_t *)descriptors + g_rxRingSize;
+
+    // Setup TX ring descriptor pointers
+    g_tx_desc_first = (struct descriptor_t *)descriptors + g_rxRingSize;
+    g_tx_desc_busy  = g_tx_desc_first;
+    g_tx_desc_free  = g_tx_desc_first;
+    g_tx_desc_last  = g_tx_desc_first + g_tx_size - 1;
+
+    // HACK: Reduce the number of TX descriptors by 1 so that we always have a
+    // spare descriptor in case we need to split a packet.
+    g_tx_size -= 1;
 
     // Remember the offset between virtual and physical address
     g_rxRingBufferVtoP = ((uint32_t)g_rxRingUserBuffers) - (uint32_t)MmGetPhysicalAddress(g_rxRingUserBuffers);
@@ -386,9 +433,9 @@ int nvnetdrv_init (size_t rx_buffer_count, nvnetdrv_rx_callback_t rx_callback, s
     reg32(NvRegRxDeferral) = NVREG_RX_DEFERRAL_DEFAULT;
 
     // Point the NIC to our TX and RX ring buffers. NIC expects Ring size as size-1.
-    reg32(NvRegTxRingPhysAddr) = MmGetPhysicalAddress((void *)g_txRing);
+    reg32(NvRegTxRingPhysAddr) = MmGetPhysicalAddress((void *)g_tx_desc_first);
     reg32(NvRegRxRingPhysAddr) = MmGetPhysicalAddress((void *)g_rxRing);
-    reg32(NvRegRingSizes) = ((g_rxRingSize - 1) << NVREG_RINGSZ_RXSHIFT) | ((g_txRingSize - 1) << NVREG_RINGSZ_TXSHIFT);
+    reg32(NvRegRingSizes) = ((g_rxRingSize - 1) << NVREG_RINGSZ_RXSHIFT) | ((g_tx_size) << NVREG_RINGSZ_TXSHIFT);
 
     // MS Dash does this and sets up both these registers with 0x300010)
     reg32(NvRegUnknownSetupReg7) = NVREG_UNKSETUP7_VAL1;  // RxWatermark?
@@ -417,9 +464,6 @@ int nvnetdrv_init (size_t rx_buffer_count, nvnetdrv_rx_callback_t rx_callback, s
     KeInitializeInterrupt(&g_interrupt, &nvnetdrv_isr, NULL, g_irq, g_irql, LevelSensitive, TRUE);
     KeInitializeDpc(&g_dpcObj, nvnetdrv_dpc, NULL);
     KeInitializeEvent(&g_irqEvent, SynchronizationEvent, FALSE);
-
-    // We use semaphores to track the number of free TX ring descriptors.
-    KeInitializeSemaphore(&g_txRingFreeCount, g_txRingSize, g_txRingSize);
 
     // Fill up our RX ring with buffers
     for (uint32_t i = 0; i < g_rxRingSize; i++) {
@@ -473,20 +517,7 @@ void nvnetdrv_stop (void)
     bool prev_value = atomic_exchange(&g_running, false);
     assert(prev_value);
 
-    // End the IRQ event-handling thread
-    KeSetEvent(&g_irqEvent, IO_NETWORK_INCREMENT, FALSE);
-    NtWaitForSingleObject(g_irqThread, FALSE, NULL);
-    NtClose(g_irqThread);
-
-    // Pass back all TX buffers to user.
-    for (int i = 0; i < g_txRingSize; i++) {
-        if (g_txData[i].callback) {
-            g_txData[i].callback(g_txData[i].userdata);
-        }
-    }
-
-    // Free all TX descriptors g_txRingFreeCount so nvnetdrv_acquire_tx_descriptors will return.
-    KeReleaseSemaphore(&g_txRingFreeCount, IO_NETWORK_INCREMENT, g_txPendingCount, NULL);
+    // TODO: Pass back all TX buffers to user.
 
     // Reset TX & RX control
     reg32(NvRegTxRxControl) = NVREG_TXRXCTL_DISABLE | NVREG_TXRXCTL_RESET;
@@ -496,7 +527,6 @@ void nvnetdrv_stop (void)
     // Free all memory allocated by nvnetdrv
     MmFreeContiguousMemory((void *)g_rxRing);
     MmFreeContiguousMemory((void *)g_rxRingUserBuffers);
-    free(g_txData);
 }
 
 void nvnetdrv_start_txrx (void)
@@ -533,82 +563,61 @@ void nvnetdrv_stop_txrx (void)
     reg32(NvRegTxRxControl) = 0;
 }
 
-int nvnetdrv_acquire_tx_descriptors (size_t count)
+void nvnetdrv_tx_transmit (struct pbuf *p)
 {
-    // Sanity check
-    assert(count > 0);
-    // Avoid excessive requests
-    assert(count <= 4);
+    // Insert the packet into the transmit queue
+    InsertTailList(&nvnetdrv_tx_queue, &p->ListEntry);
 
-    if (!g_running) return false;
+    // Lock the buffer pages since the NIC will be accessing them
+    MmLockUnlockBufferPages(p->payload, p->len, FALSE);
 
-    // First let's try claim descriptors without sleeping, if that fails we sleep
-    PLARGE_INTEGER timeout = NO_SLEEP;
-    for (size_t i = 0; i < count; i++) {
-        NTSTATUS status = KeWaitForSingleObject(&g_txRingFreeCount, Executive, KernelMode, FALSE, timeout);
-        if (!NT_SUCCESS(status) || !g_running) {
-            if (i > 0) {
-                KeReleaseSemaphore(&g_txRingFreeCount, IO_NETWORK_INCREMENT, i, FALSE);
-            }
-            assert(!g_running);
-            return false;
-        }
-        // Try again, but wait now
-        if (status == STATUS_TIMEOUT) {
-            i--;
-            timeout = NULL;
-        }
-    }
-    return true;
-}
+    // Set up the first descriptor for the packet
+    struct descriptor_t *tx_desc = g_tx_desc_free;
+    tx_desc->paddr = MmGetPhysicalAddress(p->payload);
 
-void nvnetdrv_submit_tx_descriptors (nvnetdrv_descriptor_t *buffers, size_t count)
-{
-    // Sanity check
-    assert(count > 0);
-    // Avoid excessive requests
-    assert(count <= 4);
+    // Calculate the number of bytes that cross over the page boundary
+    size_t cross_page_bytes = PAGE_SIZE - (tx_desc->paddr & (PAGE_SIZE - 1));
 
-    if (!g_running) return;
+    // Check if the packet crosses a page boundary
+    // TODO: Use unlikely/likely macros
+    if(cross_page_bytes < p->len) {
+        // Store flag in the packet to indicate that it crosses a page boundary
+        p->flags |= PBUF_FLAG_IS_DESCRIPTOR_SPLIT;
 
-    // Check that no buffer crosses a page boundary
-    for (size_t i = 0; i < count; i++) {
-        // For 4KiB pages, the least significant 12 bits are intra-page offsets, so shift them away and compare the rest
-        assert(((uint32_t)buffers[i].addr >> 12) == (((uint32_t)buffers[i].addr + buffers[i].length - 1) >> 12));
-    }
+        // This packet crosses a page boundary. We need to split it into two descriptors for the NIC.
+        struct descriptor_t *tx_desc0 = tx_desc;
 
-    // We don't check for buffer overrun here, because the Semaphore already protects us
-    size_t descriptors_index = g_txRingTail;
-    while (
-        !atomic_compare_exchange_weak(&g_txRingTail, &descriptors_index, (descriptors_index + count) % g_txRingSize)) {
-        descriptors_index = g_txRingTail;
+        // Swap the first descriptor to the next one so that the NIC processes the second descriptor first
+        tx_desc = (tx_desc0 == g_tx_desc_last ? g_tx_desc_first : (tx_desc0 + 1));
+        tx_desc->paddr = MmGetPhysicalAddress((PVOID)((char *)p->payload + cross_page_bytes));
+
+        // Increase the busy descriptor count to account for the second descriptor
+        g_tx_busy++;
+
+        // Enable the second descriptor
+        tx_desc->length = p->len - cross_page_bytes - 1;
+        tx_desc->flags  = NV_TX_VALID | NV_TX_LASTPACKET;
+
+        // Enable first descriptor last to keep the NIC from sending incomplete packets
+        tx_desc0->length = cross_page_bytes - 1;
+        tx_desc0->flags  = NV_TX_VALID;
+    } else {
+        // Clear the flag in the packet to indicate that it does not cross a page boundary
+        p->flags &= ~PBUF_FLAG_IS_DESCRIPTOR_SPLIT;
+
+        // Enable the packet descriptor
+        tx_desc->length = p->len - 1;
+        tx_desc->flags  = NV_TX_VALID | NV_TX_LASTPACKET;
     }
 
-    for (size_t i = 0; i < count; i++) {
-        size_t current_descriptor_index = (descriptors_index + i) % g_txRingSize;
-
-        g_txData[current_descriptor_index].bufAddr = buffers[i].addr;
-        g_txData[current_descriptor_index].length = buffers[i].length;
-        g_txData[current_descriptor_index].userdata = buffers[i].userdata;
-        g_txData[current_descriptor_index].callback = buffers[i].callback;
-
-        // Buffers get locked before sending and unlocked after sending
-        MmLockUnlockBufferPages(buffers[i].addr, buffers[i].length, FALSE);
-        g_txRing[current_descriptor_index].paddr = MmGetPhysicalAddress(buffers[i].addr);
-        g_txRing[current_descriptor_index].length = buffers[i].length - 1;
-        g_txRing[current_descriptor_index].flags = (i != 0 ? NV_TX_VALID : 0);
-    }
-
-    // Terminate descriptor chain
-    g_txRing[(descriptors_index + count - 1) % g_txRingSize].flags |= NV_TX_LASTPACKET;
+    // Update the transmit free descriptor pointer to the next descriptor
+    g_tx_desc_free = (tx_desc == g_tx_desc_last ? g_tx_desc_first : (tx_desc + 1));
 
     // Keep track of how many descriptors are in use
-    g_txPendingCount += count;
+    g_tx_busy++;
 
-    // Enable first descriptor last to keep the NIC from sending incomplete packets
-    g_txRing[descriptors_index].flags |= NV_TX_VALID;
-
-    // Inform that NIC that we have TX packet waiting
+    // Inform the NIC that we have TX packets waiting
+    // TODO: Check if the NIC has been stopped before kicking it
     reg32(NvRegTxRxControl) = NVREG_TXRXCTL_KICK;
 }
 
