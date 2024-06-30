@@ -348,6 +348,20 @@
  */
 #define PBUF_LINK_HLEN                  16
 
+// HACK: Extend Pbuf Flags... This will break if lwIP adds more flags in the future.
+// This should be fine for now (and avoids increasing the pbuf struct size)
+#define PBUF_FLAG_IS_DESCRIPTOR_SPLIT    0x40
+
+// Define struct pbuf pointer type
+typedef struct pbuf *pbuf_t;
+
+// Callback complete function typedef
+typedef void (*complete_cb)(struct pbuf *p);
+
+#define LWIP_PBUF_CUSTOM_DATA \
+   LIST_ENTRY  ListEntry; \
+   complete_cb Complete;
+
 /*
    ------------------------------------------------
    ---------- Network Interfaces options ----------

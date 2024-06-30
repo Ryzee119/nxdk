@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: 2015 Matt Borgerson
 // SPDX-FileCopyrightText: 2022 Stefan Schmidt
 // SPDX-FileCopyrightText: 2022 Ryan Wendland
+// SPDX-FileCopyrightText: 2024 Dustin Holden
 
 #include "lwip/opt.h"
 #include "lwip/def.h"
@@ -32,6 +33,12 @@
 
 static struct netif *g_pnetif;
 static sys_mbox_t rx_mbox;
+
+// DPC for handling TX packets from the lwIP stack
+static KDPC nvnetif_tx_dcp;
+
+// Network packets are queued here before being sent to the NIC driver
+static LIST_ENTRY nvnetif_tx_queue;
 
 /**
  * Helper struct to hold private data used to operate your ethernet interface.
@@ -117,6 +124,12 @@ static err_t low_level_init(struct netif *netif)
         return ERR_IF;
     }
 
+    // Initialize DPC
+    KeInitializeDpc(&nvnetif_tx_dcp, nvnetif_tx_push, NULL);
+
+    // Initialize TX queue
+    InitializeListHead(&nvnetif_tx_queue);
+
     sys_mbox_new(&rx_mbox, RX_BUFF_CNT);
     sys_thread_new("rx_thread", rx_callback_handler, NULL,
                     DEFAULT_THREAD_STACKSIZE,DEFAULT_THREAD_PRIO);
@@ -186,66 +199,58 @@ static err_t low_level_output(struct netif *netif, struct pbuf *p)
     pbuf_header(p, -ETH_PAD_SIZE); /* drop the padding word */
 #endif
 
-    nvnetdrv_descriptor_t descriptors[4];
-    size_t pbufCount = 0;
-    for (struct pbuf *q = p; q != NULL; q = q->next)
-    {
-        assert(p->len < 4096);
-        descriptors[pbufCount].addr = q->payload;
-        descriptors[pbufCount].length = q->len;
-        descriptors[pbufCount].callback = NULL;
+    // TODO: Verify if we can support more than 2 pbufs chained. The driver
+    // currently makes assumptions about split descriptors and the number of
+    // pbufs chained.
+    assert(p->len < 4096);
+    assert(pbuf_clen(p) <= 2);
 
-        pbufCount++;
-        if (pbufCount > 4)
-            return ERR_MEM;
+    // Add the pbuf to our transmission queue
+    for (struct pbuf *q = p; q != NULL; q = q->next) {
+        // Set the completion callback for the last pbuf in the chain
+        if (q->next == NULL)
+            q->Complete = (complete_cb)tx_pbuf_free_callback;
 
-        const uint32_t addr_start = (uint32_t)q->payload;
-        const uint32_t addr_end = ((uint32_t)q->payload + q->len);
-        if (addr_start >> 12 != addr_end >> 12) {
-            // Buffer crosses a page boundary
-            const uint32_t addr_boundary = (addr_end & 0xFFFFF000);
-            const uint32_t length_a = addr_boundary - addr_start;
-            const uint32_t length_b = addr_end - addr_boundary;
-
-            // Buffer ends right at page boundary, so no problem
-            if (length_b == 0)
-                continue;
-
-            // Fixup the descriptor
-            descriptors[pbufCount - 1].length = length_a;
-
-            // Queue another descriptor for the remainder
-            descriptors[pbufCount].addr = (void *)addr_boundary;
-            descriptors[pbufCount].length = length_b;
-            descriptors[pbufCount].callback = NULL;
-
-            pbufCount++;
-            if (pbufCount > 4)
-                return ERR_MEM;
-        }
+        // Add the pbuf to the queue
+        InsertTailList(&nvnetif_tx_queue, &q->ListEntry);
     }
-
-    // Last descriptor gets the callback to free the pbufs
-    descriptors[pbufCount - 1].userdata = (void *)p;
-    descriptors[pbufCount - 1].callback = tx_pbuf_free_callback;
-
-    int r = nvnetdrv_acquire_tx_descriptors(pbufCount);
-    if (!r) {
-        return ERR_MEM;
-    }
-
-#if ETH_PAD_SIZE
-    pbuf_header(p, ETH_PAD_SIZE); /* reclaim the padding word */
-#endif
 
     // Increase pbuf refcount so they don't get freed while the NIC requires them
     pbuf_ref(p);
 
-    nvnetdrv_submit_tx_descriptors(descriptors, pbufCount);
-
-    LINK_STATS_INC(link.xmit);
+    // Queue DPC to handle the packet
+    KeInsertQueueDpc(&nvnetif_tx_dcp, NULL, NULL);
 
     return ERR_OK;
+}
+
+/**
+ * This function pushes a packet off the transmisson queue and into the lwIP driver.
+ * Called from the DPC context.
+ *
+ * @param Dpc unused
+ * @param DeferredContext unused
+ * @param SystemArgument1 unused
+ * @param SystemArgument2 unused
+ *
+ * @return VOID
+ */
+void NTAPI nvnetif_tx_push(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, PVOID SystemArgument2)
+{
+    LWIP_UNUSED_ARG(Dpc);
+    LWIP_UNUSED_ARG(DeferredContext);
+    LWIP_UNUSED_ARG(SystemArgument1);
+    LWIP_UNUSED_ARG(SystemArgument2);
+
+    while (!IsListEmpty(&nvnetif_tx_queue) && nvnetdrv_tx_ready())
+    {
+        LIST_ENTRY *entry = RemoveHeadList(&nvnetif_tx_queue);
+
+        // TODO: Make sure the network has not been stopped
+
+        // Send the packet to the driver
+        nvnetdrv_tx_transmit((struct pbuf *)CONTAINING_RECORD(entry, struct pbuf, ListEntry));
+    }
 }
 
 /**
