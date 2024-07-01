@@ -32,7 +32,6 @@
 #define LINK_SPEED_OF_YOUR_NETIF_IN_BPS 100 * 1000 * 1000 /* 100 Mbps */
 
 static struct netif *g_pnetif;
-static sys_mbox_t rx_mbox;
 
 // DPC for handling TX packets from the lwIP stack
 static KDPC nvnetif_tx_dcp;
@@ -62,51 +61,42 @@ typedef struct
 {
     struct pbuf_custom p;
     uint8_t *buff;
-    uint16_t length;
 } rx_pbuf_t;
 
 LWIP_MEMPOOL_DECLARE(RX_POOL, RX_BUFF_CNT, sizeof(rx_pbuf_t), "Zero-copy RX PBUF pool");
 static void rx_pbuf_free_callback(struct pbuf *p)
 {
+    SYS_ARCH_DECL_PROTECT(old_level);
+
     rx_pbuf_t *rx_pbuf = (rx_pbuf_t *)p;
+
+    SYS_ARCH_PROTECT(old_level);
     nvnetdrv_rx_release(rx_pbuf->buff);
     LWIP_MEMPOOL_FREE(RX_POOL, rx_pbuf);
+    SYS_ARCH_UNPROTECT(old_level);
 }
 
-static void rx_callback_handler(void *arg)
-{
-    rx_pbuf_t *rx_pbuf;
-    while(1) {
-        sys_arch_mbox_fetch(&rx_mbox, (void **)&rx_pbuf, 0);
-        struct pbuf *p = pbuf_alloced_custom(PBUF_RAW,
-                                        rx_pbuf->length + ETH_PAD_SIZE,
-                                        PBUF_REF,
-                                        &rx_pbuf->p,
-                                        rx_pbuf->buff - ETH_PAD_SIZE,
-                                        NVNET_RX_BUFF_LEN - ETH_PAD_SIZE);
-
-        if (g_pnetif->input(p, g_pnetif) != ERR_OK) {
-            pbuf_free(p);
-        }
-    }
-}
-
-// This callback is from the HW IRQ, we cant directly send to lwip tcpip core
-// as it may block and could deadlock us. Instead we post to a mailbox and handle it in a separate worker
-// thread.
+// This callback is from the HW IRQ
 static void rx_callback(void *buffer, uint16_t length)
 {
     rx_pbuf_t *rx_pbuf = (rx_pbuf_t *)LWIP_MEMPOOL_ALLOC(RX_POOL);
     assert(rx_pbuf != NULL);
     LWIP_ASSERT("RX_POOL full\n", rx_pbuf != NULL);
     if (rx_pbuf == NULL) return;
-    rx_pbuf->p.custom_free_function = rx_pbuf_free_callback;
-    rx_pbuf->buff = buffer;
-    rx_pbuf->length = length;
 
-    // Post it, this should always succeed as mbox size matches rx ring size
-    err_t res = sys_mbox_trypost(&rx_mbox, (void *)rx_pbuf);
-    assert(res == ERR_OK);
+    rx_pbuf->p.custom_free_function = rx_pbuf_free_callback;
+    rx_pbuf->buff   = buffer;
+
+    struct pbuf* p = pbuf_alloced_custom(PBUF_RAW,
+        length + ETH_PAD_SIZE,
+        PBUF_REF,
+        &rx_pbuf->p,
+        rx_pbuf->buff - ETH_PAD_SIZE,
+        NVNET_RX_BUFF_LEN - ETH_PAD_SIZE);
+
+    if(g_pnetif->input(p, g_pnetif) != ERR_OK) {
+        pbuf_free(p);
+    }
 }
 
 /**
@@ -129,10 +119,6 @@ static err_t low_level_init(struct netif *netif)
 
     // Initialize TX queue
     InitializeListHead(&nvnetif_tx_queue);
-
-    sys_mbox_new(&rx_mbox, RX_BUFF_CNT);
-    sys_thread_new("rx_thread", rx_callback_handler, NULL,
-                    DEFAULT_THREAD_STACKSIZE,DEFAULT_THREAD_PRIO);
 
     /* set MAC hardware address length */
     netif->hwaddr_len = ETHARP_HWADDR_LEN;
