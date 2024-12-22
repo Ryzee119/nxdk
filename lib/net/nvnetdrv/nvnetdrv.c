@@ -650,5 +650,8 @@ void nvnetdrv_rx_release (void *buffer_virt)
     g_rxRing[index].paddr = nvnetdrv_rx_vtop((uint32_t)buffer_virt);
     g_rxRing[index].length = NVNET_RX_BUFF_LEN;
     g_rxRing[index].flags = NV_RX_AVAIL;
-    reg32(NvRegTxRxControl) = NVREG_TXRXCTL_GET;
+
+    if (g_running) {
+        reg32(NvRegTxRxControl) = NVREG_TXRXCTL_GET;
+    }
 }
