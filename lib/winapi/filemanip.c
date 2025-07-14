@@ -629,3 +629,50 @@ DWORD GetLogicalDriveStringsA (DWORD nBufferLength, LPSTR lpBuffer)
     *lpBuffer = '\0';
     return requiredBufLength;
 }
+
+BOOL GetFileInformationByHandle (HANDLE hFile, LPBY_HANDLE_FILE_INFORMATION lpFileInformation)
+{
+    NTSTATUS status;
+    IO_STATUS_BLOCK ioStatusBlock;
+    FILE_NETWORK_OPEN_INFORMATION network;
+    FILE_FS_VOLUME_INFORMATION volume;
+    FILE_INTERNAL_INFORMATION internal;
+
+    assert(lpFileInformation != NULL);
+
+    status = NtQueryInformationFile(hFile, &ioStatusBlock, &network, sizeof(network), FileNetworkOpenInformation);
+    if (!NT_SUCCESS(status)) {
+        SetLastError(RtlNtStatusToDosError(status));
+        return FALSE;
+    }
+
+    status = NtQueryVolumeInformationFile(hFile, &ioStatusBlock, &volume, sizeof(volume), FileFsVolumeInformation);
+    if (!NT_SUCCESS(status)) {
+        SetLastError(RtlNtStatusToDosError(status));
+        return FALSE;
+    }
+
+    status = NtQueryInformationFile(hFile, &ioStatusBlock, &internal, sizeof(internal), FileInternalInformation);
+    if (!NT_SUCCESS(status)) {
+        SetLastError(RtlNtStatusToDosError(status));
+        return FALSE;
+    }
+
+    lpFileInformation->dwFileAttributes = network.FileAttributes;
+    lpFileInformation->ftCreationTime.dwHighDateTime = network.CreationTime.HighPart;
+    lpFileInformation->ftCreationTime.dwLowDateTime = network.CreationTime.LowPart;
+    lpFileInformation->ftLastAccessTime.dwHighDateTime = network.LastAccessTime.HighPart;
+    lpFileInformation->ftLastAccessTime.dwLowDateTime = network.LastAccessTime.LowPart;
+    lpFileInformation->ftLastWriteTime.dwHighDateTime = network.LastWriteTime.HighPart;
+    lpFileInformation->ftLastWriteTime.dwLowDateTime = network.LastWriteTime.LowPart;
+    lpFileInformation->dwVolumeSerialNumber = volume.VolumeSerialNumber;
+    lpFileInformation->nFileSizeHigh = network.EndOfFile.HighPart;
+    lpFileInformation->nFileSizeLow = network.EndOfFile.LowPart;
+    lpFileInformation->nFileIndexHigh = internal.IndexNumber.HighPart;
+    lpFileInformation->nFileIndexLow = internal.IndexNumber.LowPart;
+
+    // For the FAT file system this member is always 1
+    lpFileInformation->nNumberOfLinks = 1;
+
+    return TRUE;
+}
