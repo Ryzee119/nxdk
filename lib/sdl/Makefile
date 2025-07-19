@@ -4,18 +4,50 @@ SDL_TTF_OBJS = $(addsuffix .obj, $(basename $(SDL_TTF_SRCS)))
 
 $(NXDK_DIR)/lib/libSDL_ttf.lib: $(SDL_TTF_OBJS)
 
-FREETYPE_DIR = $(NXDK_DIR)/lib/sdl/SDL_ttf/external/freetype-2.4.12
-FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftbase.c
-FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftglyph.c
-FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftbitmap.c
-FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftstroke.c
-FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftinit.c
-FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftsystem.c
-FREETYPE_SRCS += $(FREETYPE_DIR)/src/truetype/truetype.c
-FREETYPE_SRCS += $(FREETYPE_DIR)/src/raster/raster.c
-FREETYPE_SRCS += $(FREETYPE_DIR)/src/smooth/smooth.c
+FREETYPE_DIR = $(NXDK_DIR)/lib/sdl/SDL_ttf/external/freetype
 FREETYPE_SRCS += $(FREETYPE_DIR)/src/autofit/autofit.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftbase.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftbbox.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftbdf.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftbitmap.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftcid.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftdebug.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftfstype.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftgasp.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftglyph.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftgxval.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftinit.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftmm.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftotval.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftpatent.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftpfr.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftstroke.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftsynth.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftsystem.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/fttype1.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/base/ftwinfnt.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/bdf/bdf.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/bzip2/ftbzip2.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/cache/ftcache.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/cff/cff.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/cid/type1cid.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/gzip/ftgzip.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/lzw/ftlzw.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/pcf/pcf.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/pfr/pfr.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/psaux/psaux.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/pshinter/pshinter.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/psnames/psmodule.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/raster/raster.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/sdf/sdf.c
 FREETYPE_SRCS += $(FREETYPE_DIR)/src/sfnt/sfnt.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/smooth/smooth.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/svg/svg.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/truetype/truetype.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/type1/type1.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/type42/type42.c
+FREETYPE_SRCS += $(FREETYPE_DIR)/src/winfonts/winfnt.c
+
 FREETYPE_OBJS = $(addsuffix .obj, $(basename $(FREETYPE_SRCS)))
 
 $(NXDK_DIR)/lib/libfreetype.lib: $(FREETYPE_OBJS)
