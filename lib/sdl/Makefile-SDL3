@@ -1,0 +1,95 @@
+SDL3_DIR = $(NXDK_DIR)/lib/sdl/SDL3
+
+# Core files
+SDL3_SRCS := \
+	$(wildcard $(SDL3_DIR)/src/*.c) \
+	$(wildcard $(SDL3_DIR)/src/atomic/*.c) \
+	$(wildcard $(SDL3_DIR)/src/audio/*.c) \
+	$(wildcard $(SDL3_DIR)/src/camera/*.c) \
+	$(wildcard $(SDL3_DIR)/src/core/*.c) \
+	$(wildcard $(SDL3_DIR)/src/cpuinfo/*.c) \
+	$(wildcard $(SDL3_DIR)/src/dialog/*.c) \
+	$(wildcard $(SDL3_DIR)/src/dynapi/*.c) \
+	$(wildcard $(SDL3_DIR)/src/events/*.c) \
+	$(wildcard $(SDL3_DIR)/src/filesystem/*.c) \
+	$(wildcard $(SDL3_DIR)/src/gpu/*.c) \
+	$(wildcard $(SDL3_DIR)/src/haptic/*.c) \
+	$(wildcard $(SDL3_DIR)/src/hidapi/*.c) \
+	$(filter-out $(SDL3_DIR)/src/io/SDL_iostream.c, \
+            $(wildcard $(SDL3_DIR)/src/io/*.c) \
+			$(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/SDL_iostream.c) \
+	$(wildcard $(SDL3_DIR)/src/io/generic/*.c) \
+	$(filter-out $(SDL3_DIR)/src/joystick/SDL_steam_virtual_gamepad.c, \
+              $(wildcard $(SDL3_DIR)/src/joystick/*.c)) \
+	$(wildcard $(SDL3_DIR)/src/libm/*.c) \
+	$(wildcard $(SDL3_DIR)/src/loadso/*.c) \
+	$(wildcard $(SDL3_DIR)/src/locale/*.c) \
+	$(wildcard $(SDL3_DIR)/src/main/*.c) \
+	$(wildcard $(SDL3_DIR)/src/misc/*.c) \
+	$(wildcard $(SDL3_DIR)/src/power/*.c) \
+	$(wildcard $(SDL3_DIR)/src/process/*.c) \
+	$(wildcard $(SDL3_DIR)/src/render/*.c) \
+	$(wildcard $(SDL3_DIR)/src/sensor/*.c) \
+	$(wildcard $(SDL3_DIR)/src/stdlib/*.c) \
+	$(wildcard $(SDL3_DIR)/src/storage/*.c) \
+	$(wildcard ${SDL3_DIR}/src/test/*.c) \
+	$(wildcard $(SDL3_DIR)/src/thread/*.c) \
+	$(wildcard $(SDL3_DIR)/src/time/*.c) \
+	$(wildcard $(SDL3_DIR)/src/timer/*.c) \
+	$(wildcard $(SDL3_DIR)/src/tray/*.c) \
+	$(wildcard $(SDL3_DIR)/src/video/*.c) \
+	$(wildcard $(SDL3_DIR)/src/video/yuv2rgb/*.c)
+
+# Platform Drivers
+SDL3_SRCS += \
+	$(wildcard $(SDL3_DIR)/src/audio/dummy/*.c) \
+	$(wildcard $(SDL3_DIR)/src/camera/dummy/*.c) \
+	$(wildcard $(SDL3_DIR)/src/dialog/dummy/*.c) \
+	$(wildcard $(SDL3_DIR)/src/filesystem/dummy/*.c) \
+	$(wildcard $(SDL3_DIR)/src/haptic/dummy/*.c) \
+	$(wildcard $(SDL3_DIR)/src/joystick/dummy/*.c) \
+	$(wildcard $(SDL3_DIR)/src/loadso/dummy/*.c) \
+	$(wildcard $(SDL3_DIR)/src/locale/dummy/*.c) \
+	$(wildcard $(SDL3_DIR)/src/main/generic/*.c) \
+	$(wildcard $(SDL3_DIR)/src/misc/dummy/*.c) \
+	$(wildcard $(SDL3_DIR)/src/process/dummy/*.c) \
+	$(wildcard $(SDL3_DIR)/src/render/software/*.c) \
+	$(wildcard $(SDL3_DIR)/src/sensor/dummy/*.c) \
+	$(wildcard $(SDL3_DIR)/src/storage/generic/*.c) \
+	$(filter-out $(SDL3_DIR)/src/thread/windows/SDL_systhread.c, \
+			  $(wildcard $(SDL3_DIR)/src/thread/windows/*.c) \
+			  $(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/thread/SDL_systhread.c \
+			  ${SDL3_DIR}/src/thread/generic/SDL_syscond.c \
+			  ${SDL3_DIR}/src/thread/generic/SDL_sysrwlock.c) \
+	$(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/time/SDL_systime.c \
+	$(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/timer/SDL_systimer.c \
+	$(wildcard $(SDL3_DIR)/src/tray/dummy/*.c) \
+	$(wildcard $(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/video/*.c) \
+
+SDL3_SRCS += \
+	$(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/stubs.c \
+
+SDL3TEST_SRCS = \
+	$(wildcard ${SDL3_DIR}/test/testautomation*.c)
+
+# -DSDL_platform_defines_h_ prevents SDL_PLATFORM_WIN32 being set
+SDL_FLAGS = -I$(NXDK_DIR)/lib/sdl/sdl3_xbox_glue -I$(SDL3_DIR)/include -I$(SDL3_DIR)/src
+SDL_FLAGS += -DSDL_DISABLE_ALLOCA -DSDL_DISABLE_ANALYZE_MACROS -DSTBI_NO_SIMD -DSDL_DISABLE_MMX -DSDL_MAIN_HANDLED -DSDL_platform_defines_h_
+SDL_FLAGS += -Wno-microsoft-include
+NXDK_CFLAGS += $(SDL_FLAGS)
+NXDK_CXXFLAGS += $(SDL_FLAGS)
+
+SDL3_OBJS = $(addsuffix .obj, $(basename $(SDL3_SRCS)))
+$(NXDK_DIR)/lib/libSDL3.lib: $(SDL3_OBJS)
+
+SDL3TEST_OBJS = $(addsuffix .obj, $(basename $(SDL3TEST_SRCS)))
+$(NXDK_DIR)/lib/SDL3_test.lib: $(SDL3TEST_OBJS)
+
+main.exe: $(SDL3_OBJS)
+# main.exe: $(SDL3TEST_OBJS)
+
+CLEANRULES += clean-sdl3
+
+.PHONY: clean-sdl3
+clean-sdl3:
+	$(VE)rm -f $(SDL3_OBJS) $(NXDK_DIR)/lib/libSDL3.lib

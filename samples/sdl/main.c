@@ -17,6 +17,7 @@
 #include "stdio.h"
 #include "string.h"
 #include <SDL.h>
+#include <stdlib.h>
 
 static void printSDLErrorAndReboot(void)
 {

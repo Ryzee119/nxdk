@@ -78,8 +78,8 @@ endif
 include $(NXDK_DIR)/lib/net/Makefile
 
 ifneq ($(NXDK_SDL),)
-include $(NXDK_DIR)/lib/sdl/SDL2/Makefile.xbox
-include $(NXDK_DIR)/lib/sdl/Makefile
+include $(NXDK_DIR)/lib/sdl/Makefile-SDL3
+
 endif
 
 V = 0

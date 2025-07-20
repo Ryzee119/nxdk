@@ -1,0 +1,55 @@
+SDL2_DIR = $(NXDK_DIR)/lib/sdl/SDL2
+
+SDL2_SRCS := \
+	$(wildcard $(SDL2_DIR)/src/*.c) \
+	$(wildcard $(SDL2_DIR)/src/atomic/*.c) \
+	$(wildcard $(SDL2_DIR)/src/audio/*.c) \
+	$(wildcard $(SDL2_DIR)/src/cpuinfo/*.c) \
+	$(wildcard $(SDL2_DIR)/src/events/*.c) \
+	$(wildcard $(SDL2_DIR)/src/file/*.c) \
+	$(wildcard $(SDL2_DIR)/src/haptic/*.c) \
+	$(wildcard $(SDL2_DIR)/src/haptic/dummy/*.c) \
+	$(wildcard $(SDL2_DIR)/src/hidapi/*.c) \
+	$(filter-out $(SDL2_DIR)/src/joystick/SDL_steam_virtual_gamepad.c, $(wildcard $(SDL2_DIR)/src/joystick/*.c)) \
+	$(wildcard $(SDL2_DIR)/src/joystick/dummy/*.c) \
+	$(wildcard $(SDL2_DIR)/src/loadso/dummy/*.c) \
+	$(wildcard $(SDL2_DIR)/src/power/*.c) \
+	$(wildcard $(SDL2_DIR)/src/filesystem/dummy/*.c) \
+	$(wildcard $(SDL2_DIR)/src/locale/*.c) \
+	$(wildcard $(SDL2_DIR)/src/locale/dummy/*.c) \
+	$(wildcard $(SDL2_DIR)/src/misc/*.c) \
+	$(wildcard $(SDL2_DIR)/src/misc/dummy/*.c) \
+	$(wildcard $(SDL2_DIR)/src/render/*.c) \
+	$(wildcard $(SDL2_DIR)/src/render/software/*.c) \
+	$(wildcard $(SDL2_DIR)/src/sensor/*.c) \
+	$(wildcard $(SDL2_DIR)/src/sensor/dummy/*.c) \
+	$(wildcard $(SDL2_DIR)/src/stdlib/*.c) \
+	$(wildcard $(SDL2_DIR)/src/libm/*.c) \
+	$(wildcard $(SDL2_DIR)/src/thread/*.c) \
+	$(wildcard $(SDL2_DIR)/src/timer/*.c) \
+	$(wildcard $(SDL2_DIR)/src/video/*.c) \
+	$(wildcard $(SDL2_DIR)/src/video/yuv2rgb/*.c) \
+	$(wildcard $(SDL2_DIR)/src/timer/windows/*.c) \
+	$(wildcard $(SDL2_DIR)/src/thread/generic/*.c) \
+	$(wildcard $(SDL2_DIR)/src/thread/windows/*.c) \
+	\
+	$(wildcard $(SDL2_DIR)/../sdl2_xbox_glue/audio/*.c) \
+	$(wildcard $(SDL2_DIR)/../sdl2_xbox_glue/video/*.c) \
+	$(wildcard $(SDL2_DIR)/../sdl2_xbox_glue/joystick/*.c) \
+	$(SDL2_DIR)/../sdl2_xbox_glue/stubs.c
+
+SDL_FLAGS = -I$(SDL2_DIR)/include -I$(NXDK_DIR)/lib/sdl/sdl2_xbox_glue -DSDL_DISABLE_ANALYZE_MACROS -DSDL_MAIN_HANDLED -D_INCLUDED_WINDOWS_H -DSDL_DISABLE_EMMINTRIN_H
+
+NXDK_CFLAGS += $(SDL_FLAGS)
+NXDK_CXXFLAGS += $(SDL_FLAGS)
+
+SDL2_OBJS = $(addsuffix .obj, $(basename $(SDL2_SRCS)))
+$(NXDK_DIR)/lib/libSDL2.lib: $(SDL2_OBJS)
+
+main.exe: $(NXDK_DIR)/lib/libSDL2.lib
+
+CLEANRULES += clean-sdl2
+
+.PHONY: clean-sdl2
+clean-sdl2:
+	$(VE)rm -f $(SDL2_OBJS) $(NXDK_DIR)/lib/libSDL2.lib
