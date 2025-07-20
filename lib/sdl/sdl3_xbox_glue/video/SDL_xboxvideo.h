@@ -17,6 +17,8 @@
 #include <assert.h>
 #include <stdbool.h>
 
-#define _THIS SDL_VideoDevice *_this
+// We use the dummy driver to hook our own video driver without needing to
+// modify the SDL3 source code.
+#define XBOX_bootstrap DUMMY_bootstrap
 
 #endif /* SDL_xboxvideo_h_ */

@@ -1,88 +1,67 @@
 #include <SDL3/SDL.h>
 #include <windows.h>
+
 #include "../SDL_build_config.h"
 #include <../src/time/SDL_time_c.h>
 
 #ifdef SDL_TIME_NXDK
 
-#define NS_PER_WINDOWS_TICK 100ULL
-#define WINDOWS_TICK 10000000ULL
-#define UNIX_EPOCH_OFFSET_SEC 11644473600ULL
-
 void SDL_GetSystemTimeLocalePreferences(SDL_DateFormat *df, SDL_TimeFormat *tf)
 {
-    // SDL defaults to ISO 8061 date format already.
+    // SDL defaults to ISO 8061 date format already. This will do.
     return;
 }
 
 bool SDL_GetCurrentTime(SDL_Time *ticks)
 {
-    FILETIME ft;
-
-    if (!ticks)
-    {
+    if (!ticks) {
         return SDL_InvalidParamError("ticks");
     }
 
-    GetSystemTimePreciseAsFileTime(&ft);
+    FILETIME file_time;
+    GetSystemTimePreciseAsFileTime(&file_time);
 
-    ULARGE_INTEGER uli = {
-        .LowPart = ft.dwLowDateTime,
-        .HighPart = ft.dwHighDateTime};
-
-    *ticks = SDL_TimeFromWindows(ft.dwLowDateTime, ft.dwHighDateTime);
-
+    *ticks = SDL_TimeFromWindows(file_time.dwLowDateTime, file_time.dwHighDateTime);
     return true;
 }
 
 bool SDL_TimeToDateTime(SDL_Time ticks, SDL_DateTime *dt, bool localTime)
 {
-    if (!dt)
-    {
+    if (!dt) {
         return SDL_InvalidParamError("dt");
     }
 
-    if (localTime)
-    {
+    if (localTime) {
         TIME_ZONE_INFORMATION timezone;
         DWORD result = GetTimeZoneInformation(&timezone);
 
         dt->utc_offset = -timezone.Bias;
-        if (result == TIME_ZONE_ID_STANDARD)
-        {
+        if (result == TIME_ZONE_ID_STANDARD) {
             dt->utc_offset -= timezone.StandardBias;
-        }
-        else if (result == TIME_ZONE_ID_DAYLIGHT)
-        {
+        } else if (result == TIME_ZONE_ID_DAYLIGHT) {
             dt->utc_offset -= timezone.DaylightBias;
         }
         dt->utc_offset *= 60;
 
         ticks += SDL_NS_PER_SECOND * dt->utc_offset;
-    }
-    else
-    {
+    } else {
         dt->utc_offset = 0;
     }
 
-    Uint32 low, high;
-    SDL_TimeToWindows(ticks, &low, &high);
+    FILETIME file_time;
+    SDL_TimeToWindows(ticks, (Uint32 *)&file_time.dwLowDateTime, (Uint32 *)&file_time.dwHighDateTime);
 
-    LARGE_INTEGER file_time = {
-        .LowPart = low,
-        .HighPart = high};
+    SYSTEMTIME system_time;
+    FileTimeToSystemTime(&file_time, &system_time);
 
-    TIME_FIELDS time_field;
-    RtlTimeToTimeFields(&file_time, &time_field);
-
-    dt->year = time_field.Year;
-    dt->month = time_field.Month;
-    dt->day = time_field.Day;
-    dt->hour = time_field.Hour;
-    dt->minute = time_field.Minute;
-    dt->second = time_field.Second;
+    dt->year = system_time.wYear;
+    dt->month = system_time.wMonth;
+    dt->day = system_time.wDay;
+    dt->hour = system_time.wHour;
+    dt->minute = system_time.wMinute;
+    dt->second = system_time.wSecond;
     dt->nanosecond = ticks % SDL_NS_PER_SECOND;
-    dt->day_of_week = time_field.Weekday;
+    dt->day_of_week = system_time.wDayOfWeek;
     return true;
 }
 

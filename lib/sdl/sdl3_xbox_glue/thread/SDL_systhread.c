@@ -1,5 +1,6 @@
 #include <SDL3/SDL.h>
 #include <windows.h>
+
 #include "../SDL_build_config.h"
 #include <../src/thread/SDL_thread_c.h>
 
@@ -32,8 +33,7 @@ bool SDL_SYS_CreateThread(SDL_Thread *thread,
     const SIZE_T stack_size = (thread->stacksize > PAGE_SIZE) ? ROUND_TO_PAGES(thread->stacksize) : PAGE_SIZE;
 
     thread->handle = CreateThread(NULL, stack_size, sdl_thread, thread, 0, NULL);
-    if (thread->handle == NULL)
-    {
+    if (thread->handle == NULL) {
         return WIN_SetError("Not enough resources to create thread");
     }
     return true;
@@ -43,8 +43,7 @@ bool SDL_SYS_SetThreadPriority(SDL_ThreadPriority priority)
 {
     int value;
 
-    switch (priority)
-    {
+    switch (priority) {
     case SDL_THREAD_PRIORITY_LOW:
         value = THREAD_PRIORITY_LOWEST;
         break;
@@ -59,8 +58,7 @@ bool SDL_SYS_SetThreadPriority(SDL_ThreadPriority priority)
         break;
     }
 
-    if (SetThreadPriority(GetCurrentThread(), value) == FALSE)
-    {
+    if (SetThreadPriority(GetCurrentThread(), value) == FALSE) {
         return WIN_SetError("SetThreadPriority()");
     }
 

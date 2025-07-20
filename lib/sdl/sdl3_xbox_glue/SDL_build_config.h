@@ -9,8 +9,6 @@
 
 #include <SDL3/SDL_platform_defines.h>
 #include <windows.h>
-#include <stdio.h>
-#include <errno.h>
 
 HMODULE GetModuleHandle(LPCSTR lpModuleName);
 int WIN_SetError(const char *prefix);
@@ -26,7 +24,7 @@ int WIN_SetError(const char *prefix);
 #define HAVE_STDARG_H 1
 #define HAVE_STDDEF_H 1
 #define HAVE_STDINT_H 1
-// #define HAVE_STDIO_H 1 // Disable because it also assumes we have sys/stat.h
+#define HAVE_STDIO_H 1
 #define HAVE_STDLIB_H 1
 #define HAVE_STRING_H 1
 #define HAVE_MATH_H 1
@@ -100,14 +98,15 @@ int WIN_SetError(const char *prefix);
 #define HAVE_MEMCMP 1
 
 // Platform Drivers
-#define SDL_AUDIO_DRIVER_DUMMY 1
+#define SDL_AUDIO_DRIVER_NXDK 1
 
 #define SDL_CAMERA_DRIVER_DUMMY 1
 
 #define SDL_DIALOG_DUMMY 1
 
-#define SDL_FILESYSTEM_DUMMY 1
-#define SDL_FSOPS_DUMMY 1
+#define SDL_FILESYSTEM_NXDK 1
+
+#define SDL_FSOPS_NXDK 1
 
 #define SDL_HAPTIC_DUMMY 1
 
@@ -123,19 +122,26 @@ int WIN_SetError(const char *prefix);
 
 #define SDL_SENSOR_DUMMY 1
 
-// We mostly use upstream win32 thread code.
 #define SDL_THREAD_WINDOWS 1
 #define SDL_THREAD_GENERIC_RWLOCK_SUFFIX 1
 #define SDL_THREAD_GENERIC_COND_SUFFIX 1
 
-// We use custom timer code.
 #define SDL_TIMER_NXDK 1
 
-// We use custom time code.
 #define SDL_TIME_NXDK 1
 
 #define SDL_TRAY_DUMMY 1
 
+#define SDL_VIDEO_DRIVER_NXDK 1
+
+// To avoid having to modify the SDL3 source code, we use the dummy driver
+// to hook our own audio and video drivers.
+#ifdef SDL_AUDIO_DRIVER_NXDK
+#define SDL_AUDIO_DRIVER_DUMMY 1
+#endif
+
+#ifdef SDL_VIDEO_DRIVER_NXDK
 #define SDL_VIDEO_DRIVER_DUMMY 1
+#endif
 
 #endif /* SDL_build_config_nxdk_h_ */

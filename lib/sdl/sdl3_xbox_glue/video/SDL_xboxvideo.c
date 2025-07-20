@@ -1,16 +1,14 @@
 #include "SDL_xboxvideo.h"
 
 #define XBOXVID_DRIVER_NAME "xbox"
-#define XBOX_SURFACE "_SDL_XboxSurface"
-#define XBOX_bootstrap DUMMY_bootstrap
+#define XBOX_SURFACE        "_SDL_XboxSurface"
 
 /* Currently only one window */
 static SDL_Window *xbox_window = NULL;
 
 static bool XBOX_CreateWindow(SDL_VideoDevice *_this, SDL_Window *window, SDL_PropertiesID create_props)
 {
-    if (xbox_window)
-    {
+    if (xbox_window) {
         SDL_SetError("Xbox only supports one window");
         return false;
     }
@@ -47,8 +45,7 @@ static void XBOX_PumpEvents(SDL_VideoDevice *device)
 static inline SDL_PixelFormat pixelFormatSelector(int bpp)
 {
     SDL_PixelFormat ret_val = SDL_PIXELFORMAT_UNKNOWN;
-    switch (bpp)
-    {
+    switch (bpp) {
     case 15:
         ret_val = SDL_PIXELFORMAT_XRGB1555;
         break;
@@ -74,8 +71,7 @@ static bool SDL_XBOX_CreateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window 
     // Create a new framebuffer
     SDL_GetWindowSizeInPixels(window, &w, &h);
     surface = SDL_CreateSurface(w, h, surface_format);
-    if (!surface)
-    {
+    if (!surface) {
         return false;
     }
 
@@ -93,8 +89,7 @@ bool SDL_XBOX_UpdateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *window
     SDL_Surface *surface;
 
     surface = (SDL_Surface *)SDL_GetPointerProperty(SDL_GetWindowProperties(window), XBOX_SURFACE, NULL);
-    if (!surface)
-    {
+    if (!surface) {
         return SDL_SetError("Couldn't find Xbox surface for window");
     }
 
@@ -132,7 +127,7 @@ static void SDL_XBOX_DestroyWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window
 
 static bool XBOX_VideoInit(SDL_VideoDevice *_this)
 {
-    DbgPrint("XBOX Video Driver Initialized\n");
+    XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
     SDL_DisplayMode mode;
     VIDEO_MODE vm = XVideoGetMode();
 
@@ -143,8 +138,7 @@ static bool XBOX_VideoInit(SDL_VideoDevice *_this)
     mode.h = vm.height;
     mode.refresh_rate = vm.refresh;
 
-    if (SDL_AddBasicVideoDisplay(&mode) < 0)
-    {
+    if (SDL_AddBasicVideoDisplay(&mode) < 0) {
         return false;
     }
 
@@ -154,21 +148,21 @@ static bool XBOX_VideoInit(SDL_VideoDevice *_this)
 
 static bool XBOX_SetDisplayMode(SDL_VideoDevice *_this, SDL_VideoDisplay *display, SDL_DisplayMode *mode)
 {
+    DbgPrint("XBOX_SetDisplayMode: %dx%d@%dHz\n", mode->w, mode->h, mode->refresh_rate);
     return 0;
 }
 
-static void XBOX_VideoQuit(_THIS)
+static void XBOX_VideoQuit(SDL_VideoDevice *_this)
 {
 }
 
-static SDL_VideoDevice *XBOX_CreateDevice()
+static SDL_VideoDevice *XBOX_CreateDevice(void)
 {
     SDL_VideoDevice *device;
 
     /* Initialize all variables that we clean on shutdown */
     device = (SDL_VideoDevice *)SDL_calloc(1, sizeof(SDL_VideoDevice));
-    if (!device)
-    {
+    if (!device) {
         SDL_OutOfMemory();
         return (0);
     }
@@ -189,5 +183,9 @@ static SDL_VideoDevice *XBOX_CreateDevice()
 }
 
 VideoBootStrap XBOX_bootstrap = {
-    XBOXVID_DRIVER_NAME, "SDL XBOX video driver",
-    XBOX_CreateDevice, NULL};
+    .name = "nxdk_video",
+    .desc = "SDL nxdk video driver",
+    .create = XBOX_CreateDevice,
+    .ShowMessageBox = NULL,
+    .is_preferred = true,
+};

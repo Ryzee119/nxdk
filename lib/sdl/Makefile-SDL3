@@ -17,7 +17,7 @@ SDL3_SRCS := \
 	$(wildcard $(SDL3_DIR)/src/hidapi/*.c) \
 	$(filter-out $(SDL3_DIR)/src/io/SDL_iostream.c, \
             $(wildcard $(SDL3_DIR)/src/io/*.c) \
-			$(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/SDL_iostream.c) \
+			$(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/io/SDL_iostream.c) \
 	$(wildcard $(SDL3_DIR)/src/io/generic/*.c) \
 	$(filter-out $(SDL3_DIR)/src/joystick/SDL_steam_virtual_gamepad.c, \
               $(wildcard $(SDL3_DIR)/src/joystick/*.c)) \
@@ -42,10 +42,10 @@ SDL3_SRCS := \
 
 # Platform Drivers
 SDL3_SRCS += \
-	$(wildcard $(SDL3_DIR)/src/audio/dummy/*.c) \
+	$(wildcard $(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/audio/*.c) \
 	$(wildcard $(SDL3_DIR)/src/camera/dummy/*.c) \
 	$(wildcard $(SDL3_DIR)/src/dialog/dummy/*.c) \
-	$(wildcard $(SDL3_DIR)/src/filesystem/dummy/*.c) \
+	$(wildcard $(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/filesystem/*.c) \
 	$(wildcard $(SDL3_DIR)/src/haptic/dummy/*.c) \
 	$(wildcard $(SDL3_DIR)/src/joystick/dummy/*.c) \
 	$(wildcard $(SDL3_DIR)/src/loadso/dummy/*.c) \
@@ -74,7 +74,7 @@ SDL3TEST_SRCS = \
 
 # -DSDL_platform_defines_h_ prevents SDL_PLATFORM_WIN32 being set
 SDL_FLAGS = -I$(NXDK_DIR)/lib/sdl/sdl3_xbox_glue -I$(SDL3_DIR)/include -I$(SDL3_DIR)/src
-SDL_FLAGS += -DSDL_DISABLE_ALLOCA -DSDL_DISABLE_ANALYZE_MACROS -DSTBI_NO_SIMD -DSDL_DISABLE_MMX -DSDL_MAIN_HANDLED -DSDL_platform_defines_h_
+SDL_FLAGS += -DSDL_DISABLE_ALLOCA -DSDL_DISABLE_ANALYZE_MACROS -DSTBI_NO_SIMD -DSDL_DISABLE_MMX -DSDL_platform_defines_h_
 SDL_FLAGS += -Wno-microsoft-include
 NXDK_CFLAGS += $(SDL_FLAGS)
 NXDK_CXXFLAGS += $(SDL_FLAGS)
