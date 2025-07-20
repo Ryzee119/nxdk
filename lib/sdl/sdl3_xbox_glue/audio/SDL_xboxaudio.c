@@ -5,7 +5,7 @@
 #include <xboxkrnl/xboxkrnl.h>
 
 #ifndef SDL_XBOXAUDIO_BUFFER_COUNT
-#define SDL_XBOXAUDIO_BUFFER_COUNT 2
+#define SDL_XBOXAUDIO_BUFFER_COUNT 3
 #endif
 
 #if (SDL_XBOXAUDIO_BUFFER_COUNT < 2)
@@ -15,21 +15,28 @@
 typedef struct SDL_PrivateAudioData
 {
     void *buffers[SDL_XBOXAUDIO_BUFFER_COUNT];
+    int buffer_size;
     int next_buffer;
     KSEMAPHORE playsem; // Use KSEMAPHORE because we need to post from DPC
 } SDL_PrivateAudioData;
 
 static void xbox_audio_callback(void *pac97device, void *data)
 {
-    struct SDL_PrivateAudioData *audiodata = (struct SDL_PrivateAudioData *)data;
-    KeReleaseSemaphore(&audiodata->playsem, IO_SOUND_INCREMENT, 1, FALSE);
+    struct SDL_PrivateAudioData *audio_data = (struct SDL_PrivateAudioData *)data;
+    KeReleaseSemaphore(&audio_data->playsem, IO_SOUND_INCREMENT, 1, FALSE);
     return;
 }
 
 static bool XBOXAUDIO_WaitDevice(SDL_AudioDevice *device)
 {
-    struct SDL_PrivateAudioData *audiodata = (struct SDL_PrivateAudioData *)device->hidden;
-    KeWaitForSingleObject(&audiodata->playsem, Executive, KernelMode, FALSE, NULL);
+    LARGE_INTEGER timeout;
+    timeout.QuadPart = -5000 * 100;
+
+    struct SDL_PrivateAudioData *audio_data = (struct SDL_PrivateAudioData *)device->hidden;
+    if (KeWaitForSingleObject(&audio_data->playsem, Executive, KernelMode, FALSE, &timeout) == STATUS_TIMEOUT) {
+        DbgPrint("XBOXAUDIO_WaitDevice: Timeout waiting for audio buffer\n");
+        SDL_memset(audio_data->buffers[audio_data->next_buffer], 0, audio_data->buffer_size);
+    }
     return true;
 }
 
@@ -43,13 +50,14 @@ static bool XBOXAUDIO_OpenDevice(SDL_AudioDevice *device)
 
     device->hidden = (struct SDL_PrivateAudioData *)audio_data;
     device->spec.freq = 48000;
-    device->spec.format = SDL_AUDIO_S16;
+    device->spec.format = SDL_AUDIO_S16LE;
     device->spec.channels = 2;
 
-    XAudioInit(16, 2, xbox_audio_callback, (void *)device->hidden);
+    audio_data->next_buffer = 0;
+    audio_data->buffer_size = SDL_GetDefaultSampleFramesFromFreq(device->spec.freq) * SDL_AUDIO_FRAMESIZE(device->spec);
 
     for (int i = 0; i < SDL_XBOXAUDIO_BUFFER_COUNT; i++) {
-        audio_data->buffers[i] = MmAllocateContiguousMemoryEx(SDL_AUDIO_FRAMESIZE(device->spec), 0, 0xFFFFFFFF,
+        audio_data->buffers[i] = MmAllocateContiguousMemoryEx(audio_data->buffer_size, 0, 0xFFFFFFFF,
                                                               0, PAGE_READWRITE | PAGE_WRITECOMBINE);
         if (audio_data->buffers[i] == NULL) {
             SDL_SetError("Failed to allocate audio buffer");
@@ -61,13 +69,12 @@ static bool XBOXAUDIO_OpenDevice(SDL_AudioDevice *device)
             SDL_free(audio_data);
             return false;
         }
-        SDL_memset(audio_data->buffers[i], 0, SDL_AUDIO_FRAMESIZE(device->spec));
+        SDL_memset(audio_data->buffers[i], 0, audio_data->buffer_size);
     }
 
     KeInitializeSemaphore(&audio_data->playsem, 1, SDL_XBOXAUDIO_BUFFER_COUNT);
-    XAudioProvideSamples(audio_data->buffers[0], SDL_AUDIO_FRAMESIZE(device->spec), 0);
-    audio_data->next_buffer = 1;
-
+    XAudioInit(16, 2, xbox_audio_callback, (void *)audio_data);
+    XAudioProvideSamples(audio_data->buffers[audio_data->next_buffer++], audio_data->buffer_size, 0);
     XAudioPlay();
     return true;
 }
@@ -75,6 +82,7 @@ static bool XBOXAUDIO_OpenDevice(SDL_AudioDevice *device)
 static void XBOXAUDIO_CloseDevice(SDL_AudioDevice *device)
 {
     SDL_PrivateAudioData *audio_data = (SDL_PrivateAudioData *)device->hidden;
+    XAudioPause();
     XAudioInit(16, 2, NULL, NULL);
 
     for (int i = 0; i < SDL_XBOXAUDIO_BUFFER_COUNT; i++) {
@@ -88,15 +96,15 @@ static void XBOXAUDIO_CloseDevice(SDL_AudioDevice *device)
 
 static Uint8 *XBOXAUDIO_GetDeviceBuf(SDL_AudioDevice *device, int *buffer_size)
 {
-    struct SDL_PrivateAudioData *audiodata = (struct SDL_PrivateAudioData *)device->hidden;
-    return (Uint8 *)audiodata->buffers[audiodata->next_buffer];
+    struct SDL_PrivateAudioData *audio_data = (struct SDL_PrivateAudioData *)device->hidden;
+    return (Uint8 *)audio_data->buffers[audio_data->next_buffer];
 }
 
 static bool XBOXAUDIO_PlayDevice(SDL_AudioDevice *device, const Uint8 *buffer, int buflen)
 {
-    struct SDL_PrivateAudioData *audiodata = (struct SDL_PrivateAudioData *)device->hidden;
+    struct SDL_PrivateAudioData *audio_data = (struct SDL_PrivateAudioData *)device->hidden;
     XAudioProvideSamples((unsigned char *)buffer, buflen, 0);
-    audiodata->next_buffer = (audiodata->next_buffer + 1) % SDL_XBOXAUDIO_BUFFER_COUNT;
+    audio_data->next_buffer = (audio_data->next_buffer + 1) % SDL_XBOXAUDIO_BUFFER_COUNT;
     return true;
 }
 

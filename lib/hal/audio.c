@@ -232,10 +232,12 @@ void XAudioInit(int sampleSizeInBits, int numChannels, XAudioCallback callback, 
 // tell the chip it is OK to play...
 void XAudioPlay(void)
 {
+	DbgPrint("XAudioPlay called\n");
 	AC97_DEVICE *pac97device = &ac97Device;
 	volatile unsigned char *pb = (unsigned char *)pac97device->mmio;
 	pb[0x11B] = 0x1d; // PCM out - run, allow interrupts
 	pb[0x17B] = 0x1d; // PCM out - run, allow interrupts
+	DbgPrint("XAudioPlay done\n");
 }
 
 // tell the chip it is paused.
