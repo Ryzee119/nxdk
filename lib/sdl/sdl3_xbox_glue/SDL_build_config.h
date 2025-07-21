@@ -69,7 +69,7 @@ int WIN_SetError(const char *prefix);
 // #define HAVE__COPYSIGN 1
 #define HAVE_COSF 1
 #define HAVE_EXPF 1
-#define HAVE_FABSF 1
+//#define HAVE_FABSF 1
 #define HAVE_FLOORF 1
 #define HAVE_FMODF 1
 #define HAVE_LOGF 1
@@ -110,7 +110,7 @@ int WIN_SetError(const char *prefix);
 
 #define SDL_HAPTIC_DUMMY 1
 
-#define SDL_JOYSTICK_DUMMY 1
+#define SDL_JOYSTICK_XBOX 1
 
 #define SDL_LOADSO_DUMMY 1
 
@@ -133,6 +133,8 @@ int WIN_SetError(const char *prefix);
 #define SDL_TRAY_DUMMY 1
 
 #define SDL_VIDEO_DRIVER_NXDK 1
+//#define SDL_VIDEO_RENDER_SW 1
+#define SDL_VIDEO_RENDER_XGU 1
 
 // To avoid having to modify the SDL3 source code, we use the dummy driver
 // to hook our own audio and video drivers.
@@ -142,6 +144,15 @@ int WIN_SetError(const char *prefix);
 
 #ifdef SDL_VIDEO_DRIVER_NXDK
 #define SDL_VIDEO_DRIVER_DUMMY 1
+#endif
+
+#ifdef SDL_JOYSTICK_XBOX
+#define SDL_JOYSTICK_DUMMY
+#endif
+
+#ifdef SDL_VIDEO_RENDER_XGU
+#define SDL_VIDEO_RENDER_GPU 1
+#define SDL_VIDEO_RENDER_NXDK_XGU 1
 #endif
 
 #endif /* SDL_build_config_nxdk_h_ */

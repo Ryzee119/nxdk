@@ -47,13 +47,14 @@ SDL3_SRCS += \
 	$(wildcard $(SDL3_DIR)/src/dialog/dummy/*.c) \
 	$(wildcard $(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/filesystem/*.c) \
 	$(wildcard $(SDL3_DIR)/src/haptic/dummy/*.c) \
-	$(wildcard $(SDL3_DIR)/src/joystick/dummy/*.c) \
+	$(wildcard $(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/joystick/*.c) \
 	$(wildcard $(SDL3_DIR)/src/loadso/dummy/*.c) \
 	$(wildcard $(SDL3_DIR)/src/locale/dummy/*.c) \
 	$(wildcard $(SDL3_DIR)/src/main/generic/*.c) \
 	$(wildcard $(SDL3_DIR)/src/misc/dummy/*.c) \
 	$(wildcard $(SDL3_DIR)/src/process/dummy/*.c) \
 	$(wildcard $(SDL3_DIR)/src/render/software/*.c) \
+	$(wildcard $(NXDK_DIR)/lib/sdl/sdl3_xbox_glue/render/*.c) \
 	$(wildcard $(SDL3_DIR)/src/sensor/dummy/*.c) \
 	$(wildcard $(SDL3_DIR)/src/storage/generic/*.c) \
 	$(filter-out $(SDL3_DIR)/src/thread/windows/SDL_systhread.c, \

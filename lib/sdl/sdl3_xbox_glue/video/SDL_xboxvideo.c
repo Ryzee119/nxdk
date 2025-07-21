@@ -88,18 +88,21 @@ bool SDL_XBOX_UpdateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *window
     static int frame_number;
     SDL_Surface *surface;
 
+    //return true;  // No need to update framebuffer in this backend, we use the GPU framebuffer directly.
+
     surface = (SDL_Surface *)SDL_GetPointerProperty(SDL_GetWindowProperties(window), XBOX_SURFACE, NULL);
     if (!surface) {
         return SDL_SetError("Couldn't find Xbox surface for window");
     }
 
-    // Get information about SDL window surface
+    // Get information about SDL window surface to blit from
     VIDEO_MODE vm = XVideoGetMode();
     const void *src = surface->pixels;
     SDL_PixelFormat src_format = surface->format;
+    int src_bytes_per_pixel = SDL_BYTESPERPIXEL(src_format);
     int src_pitch = surface->pitch;
 
-    // Get information about GPU framebuffer
+    // Get information about GPU framebuffer to blit to
     void *dst = XVideoGetFB();
     SDL_PixelFormat dst_format = pixelFormatSelector(vm.bpp);
     int dst_bytes_per_pixel = SDL_BYTESPERPIXEL(dst_format);
@@ -111,8 +114,18 @@ bool SDL_XBOX_UpdateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *window
     assert(width <= vm.width);
     assert(height <= vm.height);
 
+    for (int i = 0; i < numrects; i++) {
+        const SDL_Rect *rect = &rects[i];
+        Uint8 *src8 = (Uint8 *)src;
+        Uint8 *dst8 = (Uint8 *)dst;
+
+        SDL_ConvertPixels(rect->w, rect->h,
+                          src_format, &src8[rect->y * src_pitch + rect->x * src_bytes_per_pixel], src_pitch,
+                          dst_format, &dst8[rect->y * dst_pitch + rect->x * dst_bytes_per_pixel], dst_pitch);
+    }
+
     // Copy SDL window surface to GPU framebuffer
-    SDL_ConvertPixels(width, height, src_format, src, src_pitch, dst_format, dst, dst_pitch);
+    //SDL_ConvertPixels(width, height, src_format, src, src_pitch, dst_format, dst, dst_pitch);
 
     // Writeback WC buffers
     XVideoFlushFB();
