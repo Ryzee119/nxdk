@@ -7,15 +7,15 @@
 
 #include "xgu/xgux.h"
 #include <../src/render/SDL_sysrender.h>
-#include <hal/video.h>
-
 #include <SDL3/SDL_pixels.h>
+#include <hal/video.h>
 #include <stdint.h>
 
 #define nxdk_RenderDriver GPU_RenderDriver
 
-#ifndef XGU_ARENA_SIZE
-#define XGU_ARENA_SIZE (8 * PAGE_SIZE)
+// Note: To avoid stalls this vertex buffer must be sufficient to hold three frames worth of vertices.
+#ifndef VERTEX_BUFFER_SIZE
+#define VERTEX_BUFFER_SIZE (256 * 1024)
 #endif
 
 #ifndef XGU_VERTEX_ALIGNMENT
@@ -38,11 +38,9 @@ typedef struct xgu_texture
     uint8_t *data_physical_address;
 } xgu_texture_t;
 
-// Point
 typedef struct xgu_point
 {
-    float x;
-    float y;
+    float pos[2];
 } xgu_point_t;
 
 typedef struct xgu_vertex
@@ -60,12 +58,13 @@ typedef struct xgu_vertex_texture
 
 typedef struct xgu_render_data
 {
-    int texture_combiner_active;
+    int texture_shader_active;
     int vsync_enabled;
     const xgu_texture_t *active_texture;
     const xgu_texture_t *active_render_target;
     SDL_Rect viewport;
     SDL_Rect clip_rect;
+    SDL_BlendMode active_blend_mode;
     size_t vertex_data_used;
 } xgu_render_data_t;
 
@@ -139,27 +138,32 @@ static bool sdl_to_xgu_texture_format(SDL_PixelFormat fmt, int *xgu_format, int 
 // which we don't want. Instead we provide our own that uses contiguous memory allocation
 static bool arena_init(SDL_Renderer *renderer)
 {
-    renderer->vertex_data = MmAllocateContiguousMemoryEx(XGU_ARENA_SIZE, 0, 0xFFFFFFFF, 0, PAGE_WRITECOMBINE | PAGE_READWRITE);
+    renderer->vertex_data = MmAllocateContiguousMemoryEx(VERTEX_BUFFER_SIZE, 0, 0xFFFFFFFF, 0,
+                                                         PAGE_WRITECOMBINE | PAGE_READWRITE);
     if (renderer->vertex_data == NULL) {
         SDL_SetError("Failed to allocate XGU arena");
         return false;
     }
-    renderer->vertex_data_allocation = 0xFFFFFFFF;
+
     return true;
 }
 
 static void *arena_allocate(SDL_Renderer *renderer, size_t size, size_t *offset)
 {
+    xgu_render_data_t *render_data = (xgu_render_data_t *)renderer->internal;
+
+    // Ensure alignment. If every allocation is aligned, we know every pointer will be aligned.
     size = (size + XGU_VERTEX_ALIGNMENT - 1) & ~(XGU_VERTEX_ALIGNMENT - 1);
 
     // Round robin back to the start of the arena if we run out of space
-    if (renderer->vertex_data_used + size > XGU_ARENA_SIZE) {
-        renderer->vertex_data_used = 0;
+    if (render_data->vertex_data_used + size > VERTEX_BUFFER_SIZE) {
+        render_data->vertex_data_used = 0;
     }
 
-    void *ptr = (void *)((intptr_t)renderer->vertex_data + renderer->vertex_data_used);
-    renderer->vertex_data_used += size;
-    *offset = renderer->vertex_data_used - size;
+    void *ptr = (void *)((intptr_t)renderer->vertex_data + render_data->vertex_data_used);
+
+    *offset = render_data->vertex_data_used;
+    render_data->vertex_data_used += size;
     return ptr;
 }
 
@@ -387,7 +391,7 @@ static bool XBOX_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
 static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
 {
     XGU_MAYBE_UNUSED xgu_render_data_t *render_data = (xgu_render_data_t *)renderer->internal;
-    Uint32 address, pitch, zpitch, width, height, format, dma_channel;
+    Uint32 address, pitch, zpitch, width, height, clip_width, clip_height, format, dma_channel;
     xgu_texture_t *xgu_texture;
     extern unsigned int pb_ColorFmt; // From pbkit.c
 
@@ -399,6 +403,8 @@ static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
         pitch = pb_back_buffer_pitch();
         width = pb_back_buffer_width();
         height = pb_back_buffer_height();
+        clip_width = width;
+        clip_height = height;
         format = XGU_MASK(NV097_SET_SURFACE_FORMAT_COLOR, pb_ColorFmt);
     } else {
         xgu_texture = (xgu_texture_t *)texture->internal;
@@ -411,8 +417,10 @@ static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
         dma_channel = DMA_CHANNEL_3D_3;
         address = (Uint32)xgu_texture->data_physical_address;
         pitch = xgu_texture->data_width * xgu_texture->bytes_per_pixel; // The full NPOT width
-        width = xgu_texture->tex_width;
-        height = xgu_texture->tex_height;
+        width = xgu_texture->data_width;
+        height = xgu_texture->data_height;
+        clip_width = xgu_texture->tex_width;
+        clip_height = xgu_texture->tex_height;
         format = XGU_MASK(NV097_SET_SURFACE_FORMAT_COLOR, surface_format);
     }
 
@@ -428,8 +436,8 @@ static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
     p = pb_begin();
 
     p = pb_push1(p, NV097_SET_CONTEXT_DMA_COLOR, dma_channel);
-    p = pb_push1(p, NV097_SET_SURFACE_CLIP_HORIZONTAL, (width << 16));
-    p = pb_push1(p, NV097_SET_SURFACE_CLIP_VERTICAL, (height << 16));
+    p = pb_push1(p, NV097_SET_SURFACE_CLIP_HORIZONTAL, (clip_width << 16));
+    p = pb_push1(p, NV097_SET_SURFACE_CLIP_VERTICAL, (clip_height << 16));
     p = pb_push1(p, NV097_SET_SURFACE_FORMAT, format);
     p = pb_push1(p, NV097_SET_SURFACE_COLOR_OFFSET, address);
     p = pb_push1(p, NV097_SET_SURFACE_PITCH, XGU_MASK(NV097_SET_SURFACE_PITCH_COLOR, pitch) | XGU_MASK(NV097_SET_SURFACE_PITCH_ZETA, zpitch));
@@ -535,7 +543,7 @@ static bool XBOX_RenderSetViewPort(SDL_Renderer *renderer, SDL_RenderCommand *cm
 
     p = pb_begin();
     p = xgu_set_viewport_offset(p, viewport->x, viewport->y, 0.0f, 0.0f);
-    p = xgu_set_scissor_rect(p, false, clamped_rect.x, clamped_rect.y, clamped_rect.w, clamped_rect.h);
+    p = xgu_set_scissor_rect(p, false, clamped_rect.x, clamped_rect.y, clamped_rect.w - 1, clamped_rect.h - 1);
     pb_end(p);
 
     // Store the viewport in the render data
@@ -564,7 +572,7 @@ static bool XBOX_RenderSetClipRect(SDL_Renderer *renderer, SDL_RenderCommand *cm
     SDL_GetRectIntersection(&render_data->viewport, clip_rect, &clamped_rect);
 
     p = pb_begin();
-    p = xgu_set_scissor_rect(p, false, clamped_rect.x, clamped_rect.y, clamped_rect.w, clamped_rect.h);
+    p = xgu_set_scissor_rect(p, false, clamped_rect.x, clamped_rect.y, clamped_rect.w - 1, clamped_rect.h - 1);
     pb_end(p);
 
     // Store the clip rect in the render data
@@ -586,17 +594,13 @@ static bool XBOX_RenderSetDrawColor(SDL_Renderer *renderer, SDL_RenderCommand *c
 static bool XBOX_RenderClear(SDL_Renderer *renderer, SDL_RenderCommand *cmd)
 {
     XGU_MAYBE_UNUSED xgu_render_data_t *render_data = (xgu_render_data_t *)renderer->internal;
-    SDL_FColor color = cmd->data.color.color;
+    const SDL_FColor color = cmd->data.color.color;
 
-    color.r = (color.r * 255.0f);
-    color.g = (color.g * 255.0f);
-    color.b = (color.b * 255.0f);
-    color.a = (color.a * 255.0f);
+    const uint32_t color32 = ((uint32_t)(color.r * 255.0f) << 16) |
+                             ((uint32_t)(color.g * 255.0f) << 8) |
+                             ((uint32_t)(color.b * 255.0f) << 0) |
+                             ((uint32_t)(color.a * 255.0f) << 24);
 
-    const uint32_t color32 = ((uint32_t)color.r << 16) |
-                             ((uint32_t)color.g << 8) |
-                             ((uint32_t)color.b << 0) |
-                             ((uint32_t)color.a << 24);
     if (render_data->active_render_target) {
         pb_fill(0, 0, render_data->active_render_target->tex_width, render_data->active_render_target->tex_height, color32);
     } else {
@@ -612,60 +616,56 @@ static bool XBOX_RenderClear(SDL_Renderer *renderer, SDL_RenderCommand *cmd)
 static void XBOX_SetBlendMode(SDL_Renderer *renderer, int blendMode)
 {
     XGU_MAYBE_UNUSED xgu_render_data_t *render_data = (xgu_render_data_t *)renderer->internal;
-    p = pb_begin();
+
+    if (blendMode == render_data->active_blend_mode) {
+        return;
+    }
+
+    XguBlendFactor sfactor;
+    XguBlendFactor dfactor;
 
     switch (blendMode) {
     case SDL_BLENDMODE_NONE:
-    {
-        p = xgu_set_blend_func_sfactor(p, XGU_FACTOR_ONE);
-        p = xgu_set_blend_func_dfactor(p, XGU_FACTOR_ZERO);
-        p = push_command_parameter(p, NV097_SET_BLEND_EQUATION, NV097_SET_BLEND_EQUATION_V_FUNC_ADD);
+        sfactor = XGU_FACTOR_ONE;
+        dfactor = XGU_FACTOR_ZERO;
         break;
-    }
     case SDL_BLENDMODE_BLEND:
-    {
-        p = xgu_set_blend_func_sfactor(p, XGU_FACTOR_SRC_ALPHA);
-        p = xgu_set_blend_func_dfactor(p, XGU_FACTOR_ONE_MINUS_SRC_ALPHA);
-        p = push_command_parameter(p, NV097_SET_BLEND_EQUATION, NV097_SET_BLEND_EQUATION_V_FUNC_ADD);
+        sfactor = XGU_FACTOR_SRC_ALPHA;
+        dfactor = XGU_FACTOR_ONE_MINUS_SRC_ALPHA;
         break;
-    }
     case SDL_BLENDMODE_BLEND_PREMULTIPLIED:
-    {
-        p = xgu_set_blend_func_sfactor(p, XGU_FACTOR_ONE);
-        p = xgu_set_blend_func_dfactor(p, XGU_FACTOR_ONE_MINUS_SRC_ALPHA);
-        p = push_command_parameter(p, NV097_SET_BLEND_EQUATION, NV097_SET_BLEND_EQUATION_V_FUNC_ADD);
+        sfactor = XGU_FACTOR_ONE;
+        dfactor = XGU_FACTOR_ONE_MINUS_SRC_ALPHA;
         break;
-    }
     case SDL_BLENDMODE_ADD:
-    {
-        p = xgu_set_blend_func_sfactor(p, XGU_FACTOR_SRC_ALPHA);
-        p = xgu_set_blend_func_dfactor(p, XGU_FACTOR_ONE);
-        p = push_command_parameter(p, NV097_SET_BLEND_EQUATION, NV097_SET_BLEND_EQUATION_V_FUNC_ADD);
+        sfactor = XGU_FACTOR_SRC_ALPHA;
+        dfactor = XGU_FACTOR_ONE;
         break;
-    }
     case SDL_BLENDMODE_ADD_PREMULTIPLIED:
-    {
-        p = xgu_set_blend_func_sfactor(p, XGU_FACTOR_ONE);
-        p = xgu_set_blend_func_dfactor(p, XGU_FACTOR_ONE);
-        p = push_command_parameter(p, NV097_SET_BLEND_EQUATION, NV097_SET_BLEND_EQUATION_V_FUNC_ADD);
+        sfactor = XGU_FACTOR_ONE;
+        dfactor = XGU_FACTOR_ONE;
         break;
-    }
     case SDL_BLENDMODE_MUL:
-    {
-        p = xgu_set_blend_func_sfactor(p, XGU_FACTOR_DST_COLOR);
-        p = xgu_set_blend_func_dfactor(p, XGU_FACTOR_ONE_MINUS_SRC_ALPHA);
-        p = push_command_parameter(p, NV097_SET_BLEND_EQUATION, NV097_SET_BLEND_EQUATION_V_FUNC_ADD);
+        sfactor = XGU_FACTOR_DST_COLOR;
+        dfactor = XGU_FACTOR_ONE_MINUS_SRC_ALPHA;
         break;
-    }
     case SDL_BLENDMODE_MOD:
-    {
-        p = xgu_set_blend_func_sfactor(p, XGU_FACTOR_ZERO);
-        p = xgu_set_blend_func_dfactor(p, XGU_FACTOR_SRC_COLOR);
-        p = push_command_parameter(p, NV097_SET_BLEND_EQUATION, NV097_SET_BLEND_EQUATION_V_FUNC_ADD);
+        sfactor = XGU_FACTOR_ZERO;
+        dfactor = XGU_FACTOR_SRC_COLOR;
         break;
+    default:
+        SDL_Log("Unsupported blend mode %d, defaulting to SDL_BLENDMODE_BLEND", blendMode);
+        sfactor = XGU_FACTOR_SRC_ALPHA;
+        dfactor = XGU_FACTOR_ONE_MINUS_SRC_ALPHA;
     }
-    }
+
+    p = pb_begin();
+    p = xgu_set_blend_func_sfactor(p, sfactor);
+    p = xgu_set_blend_func_dfactor(p, dfactor);
+    p = push_command_parameter(p, NV097_SET_BLEND_EQUATION, NV097_SET_BLEND_EQUATION_V_FUNC_ADD);
     pb_end(p);
+
+    render_data->active_blend_mode = blendMode;
 }
 
 static bool XBOX_RenderGeometry(SDL_Renderer *renderer, void *vertices, SDL_RenderCommand *cmd)
@@ -680,9 +680,9 @@ static bool XBOX_RenderGeometry(SDL_Renderer *renderer, void *vertices, SDL_Rend
 
         p = pb_begin();
 
-        if (render_data->texture_combiner_active == 0) {
+        if (render_data->texture_shader_active == 0) {
             texture_shader_apply();
-            render_data->texture_combiner_active = 1;
+            render_data->texture_shader_active = 1;
         }
 
         const XguTexFilter texture_filter = (cmd->data.draw.texture_scale_mode == SDL_SCALEMODE_NEAREST) ? XGU_TEXTURE_FILTER_NEAREST : XGU_TEXTURE_FILTER_LINEAR;
@@ -714,9 +714,9 @@ static bool XBOX_RenderGeometry(SDL_Renderer *renderer, void *vertices, SDL_Rend
     } else {
         p = pb_begin();
 
-        if (render_data->texture_combiner_active == 1) {
+        if (render_data->texture_shader_active == 1) {
             unlit_shader_apply();
-            render_data->texture_combiner_active = 0;
+            render_data->texture_shader_active = 0;
         }
 
         pb_end(p);
@@ -740,10 +740,10 @@ static bool XBOX_RenderPoints(SDL_Renderer *renderer, void *vertices, SDL_Render
 
     XBOX_SetBlendMode(renderer, cmd->data.draw.blend);
 
-    // We need to copy the vertices to contiguous memory for XGU.
-    xgu_vertex_t *xgu_verts = (xgu_vertex_t *)vertices;
+    xgu_point_t *xgu_verts = (xgu_point_t *)vertices;
     clear_attribute_pointers();
-    xgux_set_attrib_pointer(XGU_VERTEX_ARRAY, XGU_FLOAT, 2, sizeof(xgu_point_t), xgu_verts);
+    xgux_set_attrib_pointer(XGU_VERTEX_ARRAY, XGU_FLOAT,
+                            XGU_ARRAY_SIZE(xgu_verts->pos), sizeof(xgu_point_t), xgu_verts->pos);
     xgux_draw_arrays(XGU_POINTS, 0, count);
 
     return true;
@@ -802,7 +802,6 @@ static bool XBOX_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
         cmd = cmd->next;
     }
 
-    render_data->vertex_data_used = renderer->vertex_data_used;
     return true;
 }
 
@@ -820,7 +819,12 @@ static SDL_Surface *XBOX_RenderReadPixels(SDL_Renderer *renderer, const SDL_Rect
     const int dst_pitch = surface->pitch;
     uint8_t *dst8 = surface->pixels;
 
-    // Need to ensure that the GPU has finished rendering before we read the pixels.
+    // Ensure the back buffer is fully renderered before reading pixels
+    p = pb_begin();
+    p = pb_push1(p, NV097_NO_OPERATION, 0);
+    p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
+    pb_end(p);
+
     while (pb_busy()) {
         Sleep(0);
     }
@@ -852,15 +856,13 @@ static bool XBOX_RenderPresent(SDL_Renderer *renderer)
         Sleep(0);
     }
 
+    if (render_data->vsync_enabled) {
+        pb_wait_for_vbl();
+    }
+
+    // Prepare for the next frame
     pb_reset();
     pb_target_back_buffer();
-
-    p = pb_begin();
-    p = pb_push1(p, NV097_NO_OPERATION, 0); // stall gpu pipeline (not sure it's needed in triple buffering technic)
-    pb_end(p);
-
-    renderer->vertex_data_used = render_data->vertex_data_used;
- //   DbgPrint("Vertex data used: %d\n", renderer->vertex_data_used);
     return true;
 }
 
@@ -877,13 +879,11 @@ static void XBOX_DestroyTexture(SDL_Renderer *renderer, SDL_Texture *texture)
 static void XBOX_DestroyRenderer(SDL_Renderer *renderer)
 {
     XGU_MAYBE_UNUSED xgu_render_data_t *render_data = (xgu_render_data_t *)renderer->internal;
+    SDL_free(render_data);
+    renderer->internal = NULL;
 
     MmFreeContiguousMemory(renderer->vertex_data);
     renderer->vertex_data = NULL;
-    renderer->vertex_data_allocation = 0;
-
-    SDL_free(render_data);
-    renderer->internal = NULL;
 }
 
 static bool XBOX_SetVSync(SDL_Renderer *renderer, const int vsync)
@@ -917,9 +917,6 @@ static bool XBOX_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, SDL_
 
     pb_init();
     pb_show_front_screen();
-
-    render_data->viewport = (SDL_Rect){ 0, 0, pb_back_buffer_width(), pb_back_buffer_height() };
-    render_data->clip_rect = render_data->viewport;
 
     p = pb_begin();
     shader_init();
@@ -989,6 +986,9 @@ static bool XBOX_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, SDL_
     renderer->name = "nxdk_xgu";
 
     arena_init(renderer);
+
+    render_data->viewport = (SDL_Rect){ 0, 0, pb_back_buffer_width(), pb_back_buffer_height() };
+    render_data->clip_rect = render_data->viewport;
 
     // These are supported texture formats, however not all of them are supported as render targets.
     // There appears to be no way to differentiate this, however CreateTexture will fail if the format is not supported.

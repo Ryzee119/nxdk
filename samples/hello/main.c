@@ -1,162 +1,95 @@
 /*
- * This example creates an SDL window and renderer, and then draws some
- * textures to it every frame.
+ * This example creates an SDL window and renderer, and then draws some lines,
+ * rectangles and points to it every frame.
  *
  * This code is public domain. Feel free to use it for any purpose!
  */
 
-#define SDL_MAIN_USE_CALLBACKS 1 /* use the callbacks instead of main() */
+#define SDL_MAIN_USE_CALLBACKS 1  /* use the callbacks instead of main() */
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
 /* We will use this renderer to draw into this window every frame. */
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
-static SDL_Texture *texture = NULL;
-static int texture_width = 0;
-static int texture_height = 0;
-
-#define WINDOW_WIDTH 640
-#define WINDOW_HEIGHT 480
-
-#include <windows.h>
-void MyLogOutput(void *userdata, int category, SDL_LogPriority priority, const char *message)
-{
-    (void)userdata; // unused in this example
-
-    // Print log message with category and priority
-    DbgPrint("[SDL][Category %d][Priority %d]: %s\n", category, priority, message);
-}
+static SDL_FPoint points[500];
 
 /* This function runs once at startup. */
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 {
-    SDL_Surface *surface = NULL;
-    char *bmp_path = NULL;
+    int i;
 
-    SDL_SetAppMetadata("Example Renderer Textures", "1.0", "com.example.renderer-textures");
+    SDL_SetAppMetadata("Example Renderer Primitives", "1.0", "com.example.renderer-primitives");
 
-    if (!SDL_Init(SDL_INIT_VIDEO))
-    {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_Log("Couldn't initialize SDL: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
 
-    SDL_SetLogOutputFunction(MyLogOutput, NULL);
-
-    if (!SDL_CreateWindowAndRenderer("examples/renderer/textures", WINDOW_WIDTH, WINDOW_HEIGHT, 0, &window, &renderer))
-    {
+    if (!SDL_CreateWindowAndRenderer("examples/renderer/primitives", 640, 480, 0, &window, &renderer)) {
         SDL_Log("Couldn't create window/renderer: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
 
-    /* Textures are pixel data that we upload to the video hardware for fast drawing. Lots of 2D
-       engines refer to these as "sprites." We'll do a static texture (upload once, draw many
-       times) with data from a bitmap file. */
-
-    /* SDL_Surface is pixel data the CPU can access. SDL_Texture is pixel data the GPU can access.
-       Load a .bmp into a surface, move it to a texture from there. */
-    SDL_asprintf(&bmp_path, "%ssample.bmp", SDL_GetBasePath()); /* allocate a string of the full file path */
-    surface = SDL_LoadBMP(bmp_path);
-    if (!surface)
-    {
-        SDL_Log("Couldn't load bitmap: %s", SDL_GetError());
-        return SDL_APP_FAILURE;
+    /* set up some random points */
+    for (i = 0; i < SDL_arraysize(points); i++) {
+        points[i].x = (SDL_randf() * 440.0f) + 100.0f;
+        points[i].y = (SDL_randf() * 280.0f) + 100.0f;
     }
 
-    SDL_free(bmp_path); /* done with this, the file is loaded. */
-
-    texture_width = surface->w;
-    texture_height = surface->h;
-
-    texture = SDL_CreateTextureFromSurface(renderer, surface);
-    if (!texture)
-    {
-        SDL_Log("Couldn't create static texture: %s", SDL_GetError());
-        return SDL_APP_FAILURE;
-    }
-
-    SDL_DestroySurface(surface); /* done with this, the texture has a copy of the pixels now. */
-
-    return SDL_APP_CONTINUE; /* carry on with the program! */
+    return SDL_APP_CONTINUE;  /* carry on with the program! */
 }
 
 /* This function runs when a new event (mouse input, keypresses, etc) occurs. */
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 {
-    if (event->type == SDL_EVENT_QUIT)
-    {
-        return SDL_APP_SUCCESS; /* end the program, reporting success to the OS. */
+    if (event->type == SDL_EVENT_QUIT) {
+        return SDL_APP_SUCCESS;  /* end the program, reporting success to the OS. */
     }
-    return SDL_APP_CONTINUE; /* carry on with the program! */
+    return SDL_APP_CONTINUE;  /* carry on with the program! */
 }
 
 /* This function runs once per frame, and is the heart of the program. */
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
-    SDL_FRect dst_rect;
-    const Uint64 now = SDL_GetTicks();
-
-    /* we'll have some textures move around over a few seconds. */
-    const float direction = ((now % 2000) >= 1000) ? 1.0f : -1.0f;
-    const float scale = ((float)(((int)(now % 1000)) - 500) / 500.0f) * direction;
+    SDL_FRect rect;
 
     /* as you can see from this, rendering draws over whatever was drawn before it. */
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, SDL_ALPHA_OPAQUE); /* black, full alpha */
-    SDL_RenderClear(renderer);                                   /* start with a blank canvas. */
+    SDL_SetRenderDrawColor(renderer, 33, 33, 33, SDL_ALPHA_OPAQUE);  /* dark gray, full alpha */
+    SDL_RenderClear(renderer);  /* start with a blank canvas. */
 
-    /* Just draw the static texture a few times. You can think of it like a
-       stamp, there isn't a limit to the number of times you can draw with it. */
+    /* draw a filled rectangle in the middle of the canvas. */
+    SDL_SetRenderDrawColor(renderer, 0, 0, 255, SDL_ALPHA_OPAQUE);  /* blue, full alpha */
+    rect.x = rect.y = 100;
+    rect.w = 440;
+    rect.h = 280;
+    SDL_RenderFillRect(renderer, &rect);
 
-    /* top left */
-    dst_rect.x = (100.0f * scale);
-    dst_rect.y = 0.0f;
-    dst_rect.w = (float)texture_width;
-    dst_rect.h = (float)texture_height;
-    SDL_RenderTexture(renderer, texture, NULL, &dst_rect);
+    /* draw some points across the canvas. */
+    SDL_SetRenderDrawColor(renderer, 255, 0, 0, SDL_ALPHA_OPAQUE);  /* red, full alpha */
+    SDL_RenderPoints(renderer, points, SDL_arraysize(points));
 
-    /* center this one. */
-    dst_rect.x = ((float)(WINDOW_WIDTH - texture_width)) / 2.0f;
-    dst_rect.y = ((float)(WINDOW_HEIGHT - texture_height)) / 2.0f;
-    dst_rect.w = (float)texture_width;
-    dst_rect.h = (float)texture_height;
-    SDL_RenderTexture(renderer, texture, NULL, &dst_rect);
+    /* draw a unfilled rectangle in-set a little bit. */
+    SDL_SetRenderDrawColor(renderer, 0, 255, 0, SDL_ALPHA_OPAQUE);  /* green, full alpha */
+    rect.x += 30;
+    rect.y += 30;
+    rect.w -= 60;
+    rect.h -= 60;
+    SDL_RenderRect(renderer, &rect);
 
-    /* bottom right. */
-    dst_rect.x = ((float)(WINDOW_WIDTH - texture_width)) - (100.0f * scale);
-    dst_rect.y = (float)(WINDOW_HEIGHT - texture_height);
-    dst_rect.w = (float)texture_width;
-    dst_rect.h = (float)texture_height;
-    SDL_RenderTexture(renderer, texture, NULL, &dst_rect);
+    /* draw two lines in an X across the whole canvas. */
+    SDL_SetRenderDrawColor(renderer, 255, 255, 0, SDL_ALPHA_OPAQUE);  /* yellow, full alpha */
+    SDL_RenderLine(renderer, 0, 0, 640, 480);
+    SDL_RenderLine(renderer, 0, 480, 640, 0);
 
-    static const int avg_frame_count = 60;
-    static int frame_count = 0;
-    static Uint64 start_time = 0;
-    static float fps = 0.0f;
-    if (start_time == 0)
-    {
-        start_time = SDL_GetTicks();
-    }
-    if (++frame_count >= avg_frame_count)
-    {
-        Uint64 _now = SDL_GetTicks();
-        Uint64 elapsed_ms = _now - start_time;
-        float average_frame_time = (float)elapsed_ms / avg_frame_count;
-        fps = 1000.0f * avg_frame_count / (float)elapsed_ms;
-        start_time = _now;
-        frame_count = 0;
-    }
+    SDL_RenderPresent(renderer);  /* put it all on the screen! */
 
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE);  /* white, full alpha */
-    SDL_RenderDebugTextFormat(renderer, 10.0f, 20.0f, "FPS: %.2f", fps);
-
-    SDL_RenderPresent(renderer);
-    return SDL_APP_CONTINUE; /* carry on with the program! */
+    return SDL_APP_CONTINUE;  /* carry on with the program! */
 }
 
 /* This function runs once at shutdown. */
 void SDL_AppQuit(void *appstate, SDL_AppResult result)
 {
-    SDL_DestroyTexture(texture);
     /* SDL will clean up the window/renderer for us. */
 }
+
