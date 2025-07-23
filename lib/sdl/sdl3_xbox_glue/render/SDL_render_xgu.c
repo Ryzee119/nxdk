@@ -171,8 +171,6 @@ static bool xgu_texture_format_to_pb_surface_format(int xgu_format, uint32_t *pb
 {
     switch (xgu_format) {
     case XGU_TEXTURE_FORMAT_X1R5G5B5:
-        *pb_surface_format = NV097_SET_SURFACE_FORMAT_COLOR_LE_X1R5G5B5_O1R5G5B5;
-        return true;
     case XGU_TEXTURE_FORMAT_A1R5G5B5:
         *pb_surface_format = NV097_SET_SURFACE_FORMAT_COLOR_LE_X1R5G5B5_Z1R5G5B5;
         return true;
@@ -180,8 +178,6 @@ static bool xgu_texture_format_to_pb_surface_format(int xgu_format, uint32_t *pb
         *pb_surface_format = NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5;
         return true;
     case XGU_TEXTURE_FORMAT_X8R8G8B8:
-        *pb_surface_format = NV097_SET_SURFACE_FORMAT_COLOR_LE_X8R8G8B8_O8R8G8B8;
-        return true;
     case XGU_TEXTURE_FORMAT_A8R8G8B8:
         *pb_surface_format = NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8;
         return true;
@@ -395,7 +391,7 @@ static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
     xgu_texture_t *xgu_texture;
     extern unsigned int pb_ColorFmt; // From pbkit.c
 
-    if (!texture) {
+    if (texture == NULL) {
         xgu_texture = NULL;
 
         dma_channel = DMA_CHANNEL_PIXEL_RENDERER;
@@ -442,7 +438,7 @@ static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
     p = pb_push1(p, NV097_SET_SURFACE_COLOR_OFFSET, address);
     p = pb_push1(p, NV097_SET_SURFACE_PITCH, XGU_MASK(NV097_SET_SURFACE_PITCH_COLOR, pitch) | XGU_MASK(NV097_SET_SURFACE_PITCH_ZETA, zpitch));
     p = pb_push1(p, NV097_NO_OPERATION, 0);
-    p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
+    p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0); //fix me, do we need this?
     pb_end(p);
 
     render_data->active_render_target = xgu_texture;
@@ -472,18 +468,13 @@ static bool XBOX_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd, S
                                float scale_x, float scale_y)
 {
     XGU_MAYBE_UNUSED xgu_render_data_t *render_data = (xgu_render_data_t *)renderer->internal;
-    xgu_texture_t *xgu_texture = NULL;
-    int count = indices ? num_indices : num_vertices;
-    size_t sz = (texture) ? sizeof(xgu_vertex_textured_t) : sizeof(xgu_vertex_t);
+    const int count = indices ? num_indices : num_vertices;
+    const size_t sz = (texture) ? sizeof(xgu_vertex_textured_t) : sizeof(xgu_vertex_t);
     const float color_scale = cmd->data.draw.color_scale;
 
     float *vertices = (float *)arena_allocate(renderer, count * sz, &cmd->data.draw.first);
-    if (!vertices) {
+    if (vertices == NULL) {
         return SDL_OutOfMemory();
-    }
-
-    if (texture) {
-        xgu_texture = (xgu_texture_t *)texture->internal;
     }
 
     cmd->data.draw.count = count;
@@ -491,8 +482,6 @@ static bool XBOX_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd, S
 
     for (int i = 0; i < count; i++) {
         int j;
-        float *xy_;
-        SDL_FColor *col_;
         if (size_indices == 4) {
             j = ((const Uint32 *)indices)[i];
         } else if (size_indices == 2) {
@@ -503,21 +492,21 @@ static bool XBOX_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd, S
             j = i;
         }
 
-        xy_ = (float *)((char *)xy + j * xy_stride);
+        const float *vertex_pos = (float *)((char *)xy + j * xy_stride);
+        *(vertices++) = vertex_pos[0] * scale_x;
+        *(vertices++) = vertex_pos[1] * scale_y;
 
-        *(vertices++) = xy_[0] * scale_x;
-        *(vertices++) = xy_[1] * scale_y;
-
-        col_ = (SDL_FColor *)((char *)color + j * color_stride);
-        *(vertices++) = col_->r * color_scale;
-        *(vertices++) = col_->g * color_scale;
-        *(vertices++) = col_->b * color_scale;
-        *(vertices++) = col_->a;
+        const SDL_FColor *vertex_color = (SDL_FColor *)((intptr_t)color + j * color_stride);
+        *(vertices++) = vertex_color->r * color_scale;
+        *(vertices++) = vertex_color->g * color_scale;
+        *(vertices++) = vertex_color->b * color_scale;
+        *(vertices++) = vertex_color->a;
 
         if (texture) {
-            float *uv_ = (float *)((char *)uv + j * uv_stride);
-            *(vertices++) = uv_[0] * (xgu_texture->tex_width - 1);
-            *(vertices++) = uv_[1] * (xgu_texture->tex_height - 1);
+            const xgu_texture_t *xgu_texture = (xgu_texture_t *)texture->internal;
+            const float *vertex_uv = (float *)((char *)uv + j * uv_stride);
+            *(vertices++) = vertex_uv[0] * (xgu_texture->tex_width - 1);
+            *(vertices++) = vertex_uv[1] * (xgu_texture->tex_height - 1);
         }
     }
     return true;
@@ -535,15 +524,21 @@ static bool XBOX_RenderSetViewPort(SDL_Renderer *renderer, SDL_RenderCommand *cm
     XGU_MAYBE_UNUSED xgu_render_data_t *render_data = (xgu_render_data_t *)renderer->internal;
     const SDL_Rect *viewport = &cmd->data.viewport.rect;
 
-    // Create a new rect that is the intersection of the current clip rect and the new viewport
+    // If the new viewport is the same as the current one, no need to update
+    if (SDL_memcmp(viewport, &render_data->viewport, sizeof(SDL_Rect)) == 0) {
+        return true;
+    }
+
+    // Create a new rect that is the intersection of the new clip rect and the current viewport
     // This is becaused SDL expects rendering to be clipped to the viewport and the clip rect
-    // and we can only set one scissor rect at a time.
-    SDL_Rect clamped_rect;
-    SDL_GetRectIntersection(&render_data->clip_rect, viewport, &clamped_rect);
+    // but we can only set one scissor at a time.
+    SDL_Rect scissor_clipped_rect;
+    SDL_GetRectIntersection(&render_data->clip_rect, viewport, &scissor_clipped_rect);
 
     p = pb_begin();
     p = xgu_set_viewport_offset(p, viewport->x, viewport->y, 0.0f, 0.0f);
-    p = xgu_set_scissor_rect(p, false, clamped_rect.x, clamped_rect.y, clamped_rect.w - 1, clamped_rect.h - 1);
+    p = xgu_set_scissor_rect(p, false, scissor_clipped_rect.x, scissor_clipped_rect.y,
+                             scissor_clipped_rect.w - 1, scissor_clipped_rect.h - 1);
     pb_end(p);
 
     // Store the viewport in the render data
@@ -554,28 +549,32 @@ static bool XBOX_RenderSetViewPort(SDL_Renderer *renderer, SDL_RenderCommand *cm
 static bool XBOX_RenderSetClipRect(SDL_Renderer *renderer, SDL_RenderCommand *cmd)
 {
     XGU_MAYBE_UNUSED xgu_render_data_t *render_data = (xgu_render_data_t *)renderer->internal;
-    const SDL_Rect *clip_rect = &cmd->data.cliprect.rect;
+    SDL_Rect *clip_rect = &cmd->data.cliprect.rect;
 
+    // If clipping is disabled, reset the clip rect to the entire back buffer
     if (cmd->data.cliprect.enabled == false) {
         const SDL_Rect no_clip = { 0, 0, pb_back_buffer_width() - 1, pb_back_buffer_height() - 1 };
-        p = pb_begin();
-        p = xgu_set_scissor_rect(p, false, no_clip.x, no_clip.y, no_clip.w, no_clip.h);
-        pb_end(p);
-        render_data->clip_rect = no_clip;
+        *clip_rect = no_clip;
+        return true;
+    }
+
+    // If the new clip rect is the same as the current one, no need to update
+    if (SDL_memcmp(clip_rect, &render_data->clip_rect, sizeof(SDL_Rect)) == 0) {
         return true;
     }
 
     // Create a new rect that is the intersection of the new clip rect and the current viewport
     // This is becaused SDL expects rendering to be clipped to the viewport and the clip rect
-    // and we can only set one scissor rect at a time.
-    SDL_Rect clamped_rect;
-    SDL_GetRectIntersection(&render_data->viewport, clip_rect, &clamped_rect);
+    // but we can only set one scissor at a time.
+    SDL_Rect scissor_clipped_rect;
+    SDL_GetRectIntersection(&render_data->viewport, clip_rect, &scissor_clipped_rect);
 
     p = pb_begin();
-    p = xgu_set_scissor_rect(p, false, clamped_rect.x, clamped_rect.y, clamped_rect.w - 1, clamped_rect.h - 1);
+    p = xgu_set_scissor_rect(p, false, scissor_clipped_rect.x, scissor_clipped_rect.y,
+                             scissor_clipped_rect.w - 1, scissor_clipped_rect.h - 1);
     pb_end(p);
 
-    // Store the clip rect in the render data
+    // Update the clip rect in the render data
     render_data->clip_rect = *clip_rect;
     return true;
 }
@@ -685,7 +684,8 @@ static bool XBOX_RenderGeometry(SDL_Renderer *renderer, void *vertices, SDL_Rend
             render_data->texture_shader_active = 1;
         }
 
-        const XguTexFilter texture_filter = (cmd->data.draw.texture_scale_mode == SDL_SCALEMODE_NEAREST) ? XGU_TEXTURE_FILTER_NEAREST : XGU_TEXTURE_FILTER_LINEAR;
+        const XguTexFilter texture_filter =
+            (cmd->data.draw.texture_scale_mode == SDL_SCALEMODE_NEAREST) ? XGU_TEXTURE_FILTER_NEAREST : XGU_TEXTURE_FILTER_LINEAR;
 
         if (render_data->active_texture != xgu_texture) {
             p = xgu_set_texture_offset(p, 0, xgu_texture->data_physical_address);
@@ -811,7 +811,7 @@ static SDL_Surface *XBOX_RenderReadPixels(SDL_Renderer *renderer, const SDL_Rect
     SDL_PixelFormat format = renderer->target ? renderer->target->format : SDL_PIXELFORMAT_ARGB8888;
 
     SDL_Surface *surface = SDL_CreateSurface(rect->w, rect->h, format);
-    if (!surface) {
+    if (surface == NULL) {
         return NULL;
     }
     const SDL_PixelFormat dst_format = surface->format;
@@ -832,11 +832,12 @@ static SDL_Surface *XBOX_RenderReadPixels(SDL_Renderer *renderer, const SDL_Rect
     XVideoFlushFB();
 
     VIDEO_MODE vm = XVideoGetMode();
-    const SDL_PixelFormat src_format = (vm.bpp == 32) ? SDL_PIXELFORMAT_XRGB8888 : (vm.bpp == 16) ? SDL_PIXELFORMAT_RGB565
-                                                                                                  : SDL_PIXELFORMAT_XRGB1555;
-    const int src_pitch = vm.width * dst_bytes_per_pixel;
+    const SDL_PixelFormat src_format = (vm.bpp == 32) ? SDL_PIXELFORMAT_ARGB8888 :
+                                       (vm.bpp == 16) ? SDL_PIXELFORMAT_RGB565 : SDL_PIXELFORMAT_XRGB1555;
+    const int src_pitch = vm.width * ((vm.bpp + 7) / 8);
     const uint8_t *src8 = (const uint8_t *)pb_back_buffer();
 
+    // Now copy the back buffer pixels to the surface
     SDL_ConvertPixels(rect->w, rect->h,
                       src_format, &src8[rect->y * src_pitch + rect->x * dst_bytes_per_pixel], src_pitch,
                       dst_format, &dst8[rect->y * dst_pitch + rect->x * dst_bytes_per_pixel], dst_pitch);
@@ -915,6 +916,16 @@ static bool XBOX_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, SDL_
         0.0f, 0.0f, 0.0f, 1.0f
     };
 
+    // Change the framebuffer surface format based on the video mode
+    VIDEO_MODE vm = XVideoGetMode();
+    if (vm.bpp == 16) {
+        pb_set_color_format(NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5, false);
+    } else if (vm.bpp == 15) {
+        pb_set_color_format(NV097_SET_SURFACE_FORMAT_COLOR_LE_X1R5G5B5_Z1R5G5B5, false);
+    } else {
+        pb_set_color_format(NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8, false);
+    }
+
     pb_init();
     pb_show_front_screen();
 
@@ -936,16 +947,16 @@ static bool XBOX_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, SDL_
 
     pb_end(p);
 
-    p = pb_begin();
     for (int i = 0; i < XGU_TEXTURE_COUNT; i++) {
+        p = pb_begin();
         p = xgu_set_texgen_s(p, i, XGU_TEXGEN_DISABLE);
         p = xgu_set_texgen_t(p, i, XGU_TEXGEN_DISABLE);
         p = xgu_set_texgen_r(p, i, XGU_TEXGEN_DISABLE);
         p = xgu_set_texgen_q(p, i, XGU_TEXGEN_DISABLE);
         p = xgu_set_texture_matrix_enable(p, i, false);
         p = xgu_set_texture_matrix(p, i, m_identity);
+        pb_end(p);
     }
-    pb_end(p);
 
     for (int i = 0; i < XGU_WEIGHT_COUNT; i++) {
         p = pb_begin();
@@ -987,6 +998,7 @@ static bool XBOX_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, SDL_
 
     arena_init(renderer);
 
+    // Initialize the default clip rect and viewport
     render_data->viewport = (SDL_Rect){ 0, 0, pb_back_buffer_width(), pb_back_buffer_height() };
     render_data->clip_rect = render_data->viewport;
 
