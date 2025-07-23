@@ -13,7 +13,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-#define XGU_API inline
+#define XGU_API static inline
 
 typedef enum {
     //FIXME: define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_D3D     0
@@ -250,7 +250,7 @@ typedef enum {
 
 typedef uint32_t XguStencilValue; //FIXME: Only 8 bit will be relevant probably?
 
-#define XGU_MASK(mask, val) (((val) << (__builtin_ffs(mask)-1)) & (mask))
+#define XGU_MASK(mask, val) (((val) << (__builtin_ffs((uint32_t)mask)-1)) & (mask))
 
 #define XGU_ATTRIBUTE_COUNT 16
 #define XGU_TEXTURE_COUNT 4
