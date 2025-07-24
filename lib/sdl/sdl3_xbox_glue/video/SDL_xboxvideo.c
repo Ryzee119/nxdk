@@ -13,7 +13,14 @@ static bool XBOX_CreateWindow(SDL_VideoDevice *_this, SDL_Window *window, SDL_Pr
         return false;
     }
 
-    /* Adjust the window data to match the screen */
+    SDL_PixelFormat format = SDL_GetWindowPixelFormat(window);
+    int bpp = SDL_BYTESPERPIXEL(format) * 8;
+
+    if (!XVideoSetMode(window->w, window->h, bpp, REFRESH_DEFAULT)) {
+
+        return SDL_SetError("Failed to set video mode to %dx%dx%d", window->w, window->h, bpp);
+    }
+
     VIDEO_MODE vm = XVideoGetMode();
     window->x = 0;
     window->y = 0;
@@ -88,7 +95,7 @@ bool SDL_XBOX_UpdateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *window
     static int frame_number;
     SDL_Surface *surface;
 
-    //return true;  // No need to update framebuffer in this backend, we use the GPU framebuffer directly.
+    // return true;  // No need to update framebuffer in this backend, we use the GPU framebuffer directly.
 
     surface = (SDL_Surface *)SDL_GetPointerProperty(SDL_GetWindowProperties(window), XBOX_SURFACE, NULL);
     if (!surface) {
@@ -125,7 +132,7 @@ bool SDL_XBOX_UpdateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *window
     }
 
     // Copy SDL window surface to GPU framebuffer
-    //SDL_ConvertPixels(width, height, src_format, src, src_pitch, dst_format, dst, dst_pitch);
+    // SDL_ConvertPixels(width, height, src_format, src, src_pitch, dst_format, dst, dst_pitch);
 
     // Writeback WC buffers
     XVideoFlushFB();
@@ -140,22 +147,30 @@ static void SDL_XBOX_DestroyWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window
 
 static bool XBOX_VideoInit(SDL_VideoDevice *_this)
 {
-    XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
     SDL_DisplayMode mode;
-    VIDEO_MODE vm = XVideoGetMode();
+    VIDEO_MODE xmode;
+    void *p = NULL;
+    while (XVideoListModes(&xmode, 0, 0, &p)) {
+        // Due to 1.6 bugs, lets just limit ourself to 32bpp modes
+        if (xmode.bpp != 32) {
+            continue;
+        }
 
-    /* Select display mode based on Xbox video mode */
-    SDL_zero(mode);
-    mode.format = pixelFormatSelector(vm.bpp);
-    mode.w = vm.width;
-    mode.h = vm.height;
-    mode.refresh_rate = vm.refresh;
+        // pbkit doesnt like 720 widths. FIXME?
+        if (xmode.width == 720) {
+            continue;
+        }
 
-    if (SDL_AddBasicVideoDisplay(&mode) < 0) {
-        return false;
+        SDL_zero(mode);
+        mode.format = pixelFormatSelector(xmode.bpp);
+        mode.w = xmode.width;
+        mode.h = xmode.height;
+
+        if (SDL_AddBasicVideoDisplay(&mode) < 0) {
+            return false;
+        }
     }
 
-    /* We're done! */
     return true;
 }
 

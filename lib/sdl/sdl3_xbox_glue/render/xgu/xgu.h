@@ -16,10 +16,10 @@
 #define XGU_API static inline
 
 typedef enum {
-    //FIXME: define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_D3D     0
+    XGU_UNSIGNED_BYTE_D3D = NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_D3D, //BGRA8888 if used as a XGU_COLOR_ARRAY
     //FIXME: define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S1         1
     XGU_FLOAT = NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F,
-    //FIXME: define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL     4
+    XGU_UNSIGNED_BYTE_OGL =  NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL, //RGBA8888 if used as a XGU_COLOR_ARRAY
     //FIXME: define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S32K       5
     //FIXME: define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_CMP        6
 } XguVertexArrayType;
@@ -224,6 +224,12 @@ typedef enum {
     XGU_TEXTURE_CONVOLUTION_QUINCUNX = NV097_SET_TEXTURE_FILTER_CONVOLUTION_KERNEL_QUINCUNX,
     XGU_TEXTURE_CONVOLUTION_GAUSSIAN = NV097_SET_TEXTURE_FILTER_CONVOLUTION_KERNEL_GAUSSIAN_3,
 } XguTexConvolution;
+
+typedef enum
+{
+    XGU_TEXTURE_FILTER_NEAREST = NV_PGRAPH_TEXFILTER0_MIN_BOX_LOD0,
+    XGU_TEXTURE_FILTER_LINEAR = NV_PGRAPH_TEXFILTER0_MIN_TENT_LOD0,
+} XguTexFilter;
 
 typedef enum {
     XGU_STENCIL_OP_KEEP = NV097_SET_STENCIL_OP_V_KEEP,
@@ -1090,7 +1096,7 @@ uint32_t* xgu_set_texture_control1(uint32_t* p, unsigned int texture_index, uint
 }
 
 XGU_API
-uint32_t* xgu_set_texture_filter(uint32_t* p, unsigned int texture_index, uint16_t lod_bias, XguTexConvolution convolution_kernel, uint8_t filter_min, uint8_t filter_mag,
+uint32_t* xgu_set_texture_filter(uint32_t* p, unsigned int texture_index, uint16_t lod_bias, XguTexConvolution convolution_kernel, XguTexFilter filter_min, XguTexFilter filter_mag,
                                  bool r_signed, bool g_signed, bool b_signed, bool a_signed) {
     assert(texture_index < XGU_TEXTURE_COUNT);
     return push_command_parameter(p, NV097_SET_TEXTURE_FILTER + texture_index*64,

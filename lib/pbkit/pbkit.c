@@ -78,7 +78,7 @@ static  DWORD           pb_vbl_counter=0;
 #ifdef DBG
 static int          pb_trace_mode=1;
 #else
-static int          pb_trace_mode=0;
+static int          pb_trace_mode=1;
 #endif
                 //if set, we wait after each block sending (pb_end)
                 //so we are sure GPU received all the data (slower)
