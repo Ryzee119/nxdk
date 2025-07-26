@@ -16,7 +16,9 @@
 #include <windows.h>
 #include "stdio.h"
 #include "string.h"
-#include <SDL.h>
+
+#define SDL_MAIN_HANDLED
+#include <SDL2/SDL.h>
 #include <stdlib.h>
 
 static void printSDLErrorAndReboot(void)

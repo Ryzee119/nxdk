@@ -16,6 +16,20 @@ static bool XBOX_CreateWindow(SDL_VideoDevice *_this, SDL_Window *window, SDL_Pr
     SDL_PixelFormat format = SDL_GetWindowPixelFormat(window);
     int bpp = SDL_BYTESPERPIXEL(format) * 8;
 
+    // Scale up the window to the next usuable size
+    if (window->w < 640) {
+        window->w = 640;
+    }
+    if (window->h < 480) {
+        window->h = 480;
+    }
+    if (window->w > 1280) {
+        window->w = 1280;
+    }
+    if (window->h > 720) {
+        window->h = 720;
+    }
+
     if (!XVideoSetMode(window->w, window->h, bpp, REFRESH_DEFAULT)) {
 
         return SDL_SetError("Failed to set video mode to %dx%dx%d", window->w, window->h, bpp);
