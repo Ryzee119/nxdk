@@ -13,25 +13,31 @@
 // Note: To avoid stalls this vertex buffer must be sufficient to
 // hold three frames (pbkit is tripple buffered) worth of vertices. This is to allow for
 // both the back buffers being rendered, and the active front buffer being calculated.
-#ifndef XGU_VERTEX_BUFFER_SIZE
-#define XGU_VERTEX_BUFFER_SIZE (64 * 1024)
+#ifndef SDL_XGU_VERTEX_BUFFER_SIZE
+#define SDL_XGU_VERTEX_BUFFER_SIZE (25 * 1024)
 #endif
 
-#ifndef XGU_VERTEX_ALIGNMENT
-#define XGU_VERTEX_ALIGNMENT 32
+#ifndef SDL_XGU_VERTEX_ALIGNMENT
+#define SDL_XGU_VERTEX_ALIGNMENT 32
+#endif
+
+#define SDL_XGU_SHOW_FPS 1
+#ifndef SDL_XGU_SHOW_FPS
+#define SDL_XGU_SHOW_FPS 0
 #endif
 
 #define XGU_MAYBE_UNUSED __attribute__((unused))
 
-#define PBKIT_BUFFER_COUNT 3
+#define NXDK_PBKIT_BUFFER_COUNT 3
 
 typedef struct xgu_texture
 {
-    int data_width;  // POT width
-    int data_height; // POT height
-    int tex_width;   // NPOT width
-    int tex_height;  // NPOT height
+    int data_width;
+    int data_height;
+    int tex_width;
+    int tex_height;
     int bytes_per_pixel;
+    int swizzled;
     XguTexFormatColor format;
     uint8_t *data;
     uint8_t *data_physical_address;
@@ -65,7 +71,7 @@ typedef struct xgu_render_data
     SDL_Rect clip_rect;
     SDL_BlendMode active_blend_mode;
     int vertex_arena_offset;
-    int vertex_allocations[PBKIT_BUFFER_COUNT];
+    int vertex_allocations[NXDK_PBKIT_BUFFER_COUNT];
     int frame_index;
 } xgu_render_data_t;
 
@@ -77,9 +83,10 @@ static inline void clear_attribute_pointers(void);
 static void set_blend_mode(SDL_Renderer *renderer, int blendMode);
 static void *arena_allocate(SDL_Renderer *renderer, size_t size, size_t *offset);
 static bool arena_init(SDL_Renderer *renderer);
-static bool xgu_texture_format_to_pb_surface_format(int xgu_format, uint32_t *pb_surface_format);
-static bool sdl_to_xgu_texture_format(SDL_PixelFormat fmt, int *xgu_format, int *bytes_per_pixel);
+static bool sdl_to_xgu_texture_format(SDL_PixelFormat sdl_format, int *xgu_texture_format, int *bytes_per_pixel, bool swizzled);
+static bool sdl_to_xgu_surface_format(SDL_PixelFormat sdl_format, int *xgu_surface_format, int *bytes_per_pixel);
 static inline uint32_t npot2pot(uint32_t num);
+static void calculate_fps(int stage);
 
 // pushbuffer pointer
 static uint32_t *p = NULL;
@@ -98,26 +105,36 @@ static bool XBOX_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture, SDL
         return SDL_OutOfMemory();
     }
 
-    // Texture width is the actual texture size (minus 1) and data size is a power of 2 size
-    // to contain the texture.
-    xgu_texture->tex_height = texture->h - 1;
-    xgu_texture->tex_width = texture->w - 1;
-    xgu_texture->data_height = npot2pot(texture->h);
-    xgu_texture->data_width = npot2pot(texture->w);
+    // If this is a render target, we need to check if the render target format is supported
+    if (SDL_GetNumberProperty(create_props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, 0) == SDL_TEXTUREACCESS_TARGET) {
+        int surface_format;
+        int bytes_per_pixel;
+        if (sdl_to_xgu_surface_format(texture->format, &surface_format, &bytes_per_pixel) == false) {
+            SDL_free(xgu_texture);
+            return SDL_SetError("[nxdk renderer] Unsupported render target format (%s)", SDL_GetPixelFormatName(texture->format));
+        }
+    }
+
+    // If static target we swizzle it
+    if (SDL_GetNumberProperty(create_props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, 0) == SDL_TEXTUREACCESS_STATIC) {
+        xgu_texture->swizzled = 1;
+    }
 
     // Ensure the texture format is supported
-    if (sdl_to_xgu_texture_format(texture->format, &xgu_texture->format, &xgu_texture->bytes_per_pixel) == false) {
+    if (sdl_to_xgu_texture_format(texture->format, &xgu_texture->format, &xgu_texture->bytes_per_pixel, xgu_texture->swizzled) == false) {
         SDL_free(xgu_texture);
         return SDL_SetError("[nxdk renderer] Unsupported texture format (%s)", SDL_GetPixelFormatName(texture->format));
     }
 
-    // If this is a render target, we need to check if the render target format is supported
-    if (SDL_GetNumberProperty(create_props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, 0) == SDL_TEXTUREACCESS_TARGET) {
-        uint32_t surface_format;
-        if (xgu_texture_format_to_pb_surface_format(xgu_texture->format, &surface_format) == false) {
-            SDL_free(xgu_texture);
-            return SDL_SetError("[nxdk renderer] Unsupported render target format (%s)", SDL_GetPixelFormatName(texture->format));
-        }
+    xgu_texture->tex_height = texture->h;
+    xgu_texture->tex_width = texture->w;
+
+    if (xgu_texture->swizzled) {
+        xgu_texture->data_height = npot2pot(texture->h);
+        xgu_texture->data_width = npot2pot(texture->w);
+    } else {
+        xgu_texture->data_height = texture->h;
+        xgu_texture->data_width = texture->w;
     }
 
     const size_t allocation_size = xgu_texture->data_height * xgu_texture->data_width * xgu_texture->bytes_per_pixel;
@@ -192,7 +209,7 @@ static bool XBOX_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
 static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
 {
     XGU_MAYBE_UNUSED xgu_render_data_t *render_data = (xgu_render_data_t *)renderer->internal;
-    uint32_t address, pitch, zpitch, width, height, clip_width, clip_height, format, dma_channel;
+    uint32_t address, pitch, zpitch, clip_width, clip_height, format, dma_channel;
     xgu_texture_t *xgu_texture;
     extern unsigned int pb_ColorFmt; // From pbkit.c
 
@@ -202,8 +219,6 @@ static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
         dma_channel = DMA_CHANNEL_PIXEL_RENDERER;
         address = 0;
         pitch = pb_back_buffer_pitch();
-        width = 0;
-        height = 0;
         clip_width = pb_back_buffer_width();
         clip_height = pb_back_buffer_height();
         format = XGU_MASK(NV097_SET_SURFACE_FORMAT_COLOR, pb_ColorFmt);
@@ -211,15 +226,13 @@ static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
         xgu_texture = (xgu_texture_t *)texture->internal;
         assert(xgu_texture);
 
-        uint32_t surface_format;
-        bool status = xgu_texture_format_to_pb_surface_format(xgu_texture->format, &surface_format);
+        int surface_format, bytes_per_pixel;
+        bool status = sdl_to_xgu_surface_format(texture->format, &surface_format, &bytes_per_pixel);
         assert(status);
 
         dma_channel = DMA_CHANNEL_3D_3;
         address = (uint32_t)xgu_texture->data_physical_address;
         pitch = xgu_texture->data_width * xgu_texture->bytes_per_pixel;
-        width = __builtin_ctz(xgu_texture->data_width);
-        height = __builtin_ctz(xgu_texture->data_height);
         clip_width = xgu_texture->tex_width + 1;
         clip_height = xgu_texture->tex_height + 1;
         format = XGU_MASK(NV097_SET_SURFACE_FORMAT_COLOR, surface_format);
@@ -229,8 +242,8 @@ static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
               XGU_MASK(NV097_SET_SURFACE_FORMAT_TYPE, NV097_SET_SURFACE_FORMAT_TYPE_PITCH);
 
     // I think we only need these for swizzled types
-    // XGU_MASK(NV097_SET_SURFACE_FORMAT_WIDTH, width) |
-    // XGU_MASK(NV097_SET_SURFACE_FORMAT_HEIGHT, height);
+    // XGU_MASK(NV097_SET_SURFACE_FORMAT_WIDTH, __builtin_ctz(width)) |
+    // XGU_MASK(NV097_SET_SURFACE_FORMAT_HEIGHT, __builtin_ctz(height));
 
     // We are not using the depth buffer so it is unchanged. Stick top the back buffer width.
     // Z24S8 format has 4 bytes per pixel for the zeta buffer
@@ -331,8 +344,16 @@ static bool XBOX_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd, S
 
             const xgu_texture_t *xgu_texture = (xgu_texture_t *)texture->internal;
             const float *vertex_uv = (float *)((char *)uv + j * uv_stride);
-            xgu_vertex->tex[0] = vertex_uv[0] * xgu_texture->tex_width;
-            xgu_vertex->tex[1] = vertex_uv[1] * xgu_texture->tex_height;
+
+            // Swizzled texture coords must be normalised, otherwise we stick with unnormalised
+            if (xgu_texture->swizzled) {
+                xgu_vertex->tex[0] = vertex_uv[0] * (float)(xgu_texture->tex_width - 1) / xgu_texture->data_width;
+                xgu_vertex->tex[1] = vertex_uv[1] * (float)(xgu_texture->tex_height - 1) / xgu_texture->data_height;
+            } else {
+                xgu_vertex->tex[0] = vertex_uv[0] * xgu_texture->tex_width - 1;
+                xgu_vertex->tex[1] = vertex_uv[1] * xgu_texture->tex_height - 1;
+            }
+
             vertices += sizeof(xgu_vertex_textured_t);
         } else {
             xgu_vertex_t *xgu_vertex = (xgu_vertex_t *)vertices;
@@ -386,7 +407,7 @@ static bool XBOX_RenderSetClipRect(SDL_Renderer *renderer, SDL_RenderCommand *cm
 
     // If clipping is disabled, reset the clip rect to the entire back buffer
     if (cmd->data.cliprect.enabled == false) {
-        const SDL_Rect no_clip = { 0, 0, pb_back_buffer_width() - 1, pb_back_buffer_height() - 1 };
+        const SDL_Rect no_clip = { 0, 0, pb_back_buffer_width(), pb_back_buffer_height() };
         *clip_rect = no_clip;
     }
 
@@ -645,27 +666,27 @@ static bool XBOX_RenderPresent(SDL_Renderer *renderer)
 {
     XGU_MAYBE_UNUSED xgu_render_data_t *render_data = (xgu_render_data_t *)renderer->internal;
 
-    // Set the screen white
-    // pb_fill(0, 0, pb_back_buffer_width() - 1, pb_back_buffer_height() - 1, 0xFF00FFFF);
+    calculate_fps(2);
 
     while (pb_busy()) {
         Sleep(0);
     }
 
-    // If we wait for vblank here we can avoid spinning on pb_finished() which is now guaranteed to
-    // succeed on the first call. It is more efficicent to wait on the vblank synchronization primitive
-    // than to spin on pb_finished() which waits for vblank anyway.
-    pb_wait_for_vbl();
-
     while (pb_finished()) {
         Sleep(0);
     }
 
-    // The frame is rendered so clear the vertex allocation tracking for that frame.
-    render_data->frame_index = (render_data->frame_index + 1) % PBKIT_BUFFER_COUNT;
+    calculate_fps(1);
+
+    // It's probably better to wait on the vsync primitive here than it is to spin on pb_finished next loop
+    pb_wait_for_vbl();
+
+    // A back buffer frame is rendered so clear the vertex allocation tracking for that frame.
+    render_data->frame_index = (render_data->frame_index + 1) % NXDK_PBKIT_BUFFER_COUNT;
     render_data->vertex_allocations[render_data->frame_index] = 0;
 
-    // Reset the buffer for the next frame
+    // Reset for the next frame
+    calculate_fps(0);
     pb_reset();
     return true;
 }
@@ -760,7 +781,7 @@ static bool XBOX_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, SDL_
     p = xgu_set_composite_matrix(p, m_identity);
     p = xgu_set_viewport_offset(p, 0.0f, 0.0f, 0.0f, 0.0f);
     p = xgu_set_viewport_scale(p, 1.0f, 1.0f, 1.0f, 1.0f);
-    p = xgu_set_scissor_rect(p, false, 0, 0, pb_back_buffer_width() - 1, pb_back_buffer_height() - 1);
+    p = xgu_set_scissor_rect(p, false, 0, 0, pb_back_buffer_width(), pb_back_buffer_height());
     pb_end(p);
 
     renderer->WindowEvent = XBOX_WindowEvent;
@@ -788,7 +809,7 @@ static bool XBOX_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, SDL_
     arena_init(renderer);
 
     // Initialize the default clip rect and viewport
-    render_data->viewport = (SDL_Rect){ 0, 0, pb_back_buffer_width() - 1, pb_back_buffer_height() - 1 };
+    render_data->viewport = (SDL_Rect){ 0, 0, pb_back_buffer_width(), pb_back_buffer_height() };
     render_data->clip_rect = render_data->viewport;
 
     // Point the frame index to what would be the older frame which is the one just after the one we are rendering.
@@ -827,59 +848,56 @@ static inline uint32_t npot2pot(uint32_t num)
     return 1 << (msb + 1);
 }
 
-static bool sdl_to_xgu_texture_format(SDL_PixelFormat fmt, int *xgu_format, int *bytes_per_pixel)
+static bool sdl_to_xgu_surface_format(SDL_PixelFormat sdl_format, int *xgu_surface_format, int *bytes_per_pixel)
 {
-    switch (fmt) {
-    case SDL_PIXELFORMAT_ARGB1555:
-        *xgu_format = XGU_TEXTURE_FORMAT_A1R5G5B5;
-        *bytes_per_pixel = 2;
-        return true;
+    switch (sdl_format) {
     case SDL_PIXELFORMAT_RGB565:
-        *xgu_format = XGU_TEXTURE_FORMAT_R5G6B5;
+        *xgu_surface_format = NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5;
         *bytes_per_pixel = 2;
-        return true;
-    case SDL_PIXELFORMAT_ARGB8888:
-        *xgu_format = XGU_TEXTURE_FORMAT_A8R8G8B8;
-        *bytes_per_pixel = 4;
-        return true;
     case SDL_PIXELFORMAT_XRGB8888:
-        *xgu_format = XGU_TEXTURE_FORMAT_X8R8G8B8;
+    case SDL_PIXELFORMAT_ARGB8888:
+        *xgu_surface_format = NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8;
         *bytes_per_pixel = 4;
-        return true;
-    case SDL_PIXELFORMAT_RGBA8888:
-        *xgu_format = XGU_TEXTURE_FORMAT_R8G8B8A8;
-        *bytes_per_pixel = 4;
-        return true;
-    case SDL_PIXELFORMAT_ABGR8888:
-        *xgu_format = XGU_TEXTURE_FORMAT_A8B8G8R8;
-        *bytes_per_pixel = 4;
-        return true;
-    case SDL_PIXELFORMAT_BGRA8888:
-        *xgu_format = XGU_TEXTURE_FORMAT_B8G8R8A8;
-        *bytes_per_pixel = 4;
-        return true;
-    case SDL_PIXELFORMAT_ARGB4444:
-        *xgu_format = XGU_TEXTURE_FORMAT_A4R4G4B4;
-        *bytes_per_pixel = 2;
-        return true;
-    case SDL_PIXELFORMAT_XRGB1555:
-        *xgu_format = XGU_TEXTURE_FORMAT_X1R5G5B5;
-        *bytes_per_pixel = 2;
         return true;
     default:
         return false;
     }
 }
 
-static bool xgu_texture_format_to_pb_surface_format(int xgu_format, uint32_t *pb_surface_format)
+static bool sdl_to_xgu_texture_format(SDL_PixelFormat fmt, int *xgu_format, int *bytes_per_pixel, bool swizzled)
 {
-    switch (xgu_format) {
-    case XGU_TEXTURE_FORMAT_R5G6B5:
-        *pb_surface_format = NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5;
+    switch (fmt) {
+    case SDL_PIXELFORMAT_ARGB1555:
+        *xgu_format = (swizzled) ? XGU_TEXTURE_FORMAT_A1R5G5B5_SWIZZLED : XGU_TEXTURE_FORMAT_A1R5G5B5;
+        *bytes_per_pixel = 2;
         return true;
-    case XGU_TEXTURE_FORMAT_X8R8G8B8:
-    case XGU_TEXTURE_FORMAT_A8R8G8B8:
-        *pb_surface_format = NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8;
+    case SDL_PIXELFORMAT_RGB565:
+        *xgu_format = (swizzled) ? XGU_TEXTURE_FORMAT_R5G6B5_SWIZZLED : XGU_TEXTURE_FORMAT_R5G6B5;
+        *bytes_per_pixel = 2;
+        return true;
+    case SDL_PIXELFORMAT_ARGB8888:
+        *xgu_format = (swizzled) ? XGU_TEXTURE_FORMAT_A8R8G8B8_SWIZZLED : XGU_TEXTURE_FORMAT_A8R8G8B8;
+        *bytes_per_pixel = 4;
+        return true;
+    case SDL_PIXELFORMAT_XRGB8888:
+        *xgu_format = (swizzled) ? XGU_TEXTURE_FORMAT_X8R8G8B8_SWIZZLED : XGU_TEXTURE_FORMAT_X8R8G8B8;
+        *bytes_per_pixel = 4;
+        return true;
+    case SDL_PIXELFORMAT_RGBA8888:
+        *xgu_format = (swizzled) ? XGU_TEXTURE_FORMAT_R8G8B8A8_SWIZZLED : XGU_TEXTURE_FORMAT_R8G8B8A8;
+        *bytes_per_pixel = 4;
+        return true;
+    case SDL_PIXELFORMAT_ABGR8888:
+        *xgu_format = (swizzled) ? XGU_TEXTURE_FORMAT_A8B8G8R8_SWIZZLED : XGU_TEXTURE_FORMAT_A8B8G8R8;
+        *bytes_per_pixel = 4;
+        return true;
+    case SDL_PIXELFORMAT_ARGB4444:
+        *xgu_format = (swizzled) ? XGU_TEXTURE_FORMAT_A4R4G4B4_SWIZZLED : XGU_TEXTURE_FORMAT_A4R4G4B4;
+        *bytes_per_pixel = 2;
+        return true;
+    case SDL_PIXELFORMAT_XRGB1555:
+        *xgu_format = (swizzled) ? XGU_TEXTURE_FORMAT_X1R5G5B5_SWIZZLED : XGU_TEXTURE_FORMAT_X1R5G5B5;
+        *bytes_per_pixel = 2;
         return true;
     default:
         return false;
@@ -890,7 +908,7 @@ static bool xgu_texture_format_to_pb_surface_format(int xgu_format, uint32_t *pb
 // which we don't want. Instead we provide our own that uses contiguous memory allocation
 static bool arena_init(SDL_Renderer *renderer)
 {
-    renderer->vertex_data = MmAllocateContiguousMemoryEx(XGU_VERTEX_BUFFER_SIZE, 0, 0xFFFFFFFF, 0,
+    renderer->vertex_data = MmAllocateContiguousMemoryEx(SDL_XGU_VERTEX_BUFFER_SIZE, 0, 0xFFFFFFFF, 0,
                                                          PAGE_WRITECOMBINE | PAGE_READWRITE);
     if (renderer->vertex_data == NULL) {
         SDL_SetError("Failed to allocate XGU arena");
@@ -906,22 +924,22 @@ static void *arena_allocate(SDL_Renderer *renderer, size_t size, size_t *offset)
     int total_allocated = 0;
 
     // Ensure alignment. If every allocation is aligned, we know every pointer will be aligned.
-    size = (size + XGU_VERTEX_ALIGNMENT - 1) & ~(XGU_VERTEX_ALIGNMENT - 1);
+    size = (size + SDL_XGU_VERTEX_ALIGNMENT - 1) & ~(SDL_XGU_VERTEX_ALIGNMENT - 1);
 
-    if (render_data->vertex_arena_offset + size > XGU_VERTEX_BUFFER_SIZE) {
+    if (render_data->vertex_arena_offset + size > SDL_XGU_VERTEX_BUFFER_SIZE) {
         // We lost some space to end padding, so ensure we tag that on when we validate our allocation size
-        total_allocated += render_data->vertex_arena_offset + size - XGU_VERTEX_BUFFER_SIZE;
+        total_allocated += render_data->vertex_arena_offset + size - SDL_XGU_VERTEX_BUFFER_SIZE;
 
         // Round robin back to the start of the arena
         render_data->vertex_arena_offset = 0;
     }
 
     // Area we going to overflow the vertex buffer?
-    for (int i = 0; i < PBKIT_BUFFER_COUNT; i++) {
+    for (int i = 0; i < NXDK_PBKIT_BUFFER_COUNT; i++) {
         total_allocated += render_data->vertex_allocations[i];
     }
-    if (total_allocated + size > XGU_VERTEX_BUFFER_SIZE) {
-        SDL_Log("Vertex buffer overflow. Increase XGU_VERTEX_BUFFER_SIZE", size);
+    if (total_allocated + size > SDL_XGU_VERTEX_BUFFER_SIZE) {
+        SDL_Log("Vertex buffer overflow. Increase SDL_XGU_VERTEX_BUFFER_SIZE", size);
         return NULL;
     }
 
@@ -1093,5 +1111,51 @@ static inline void texture_combiner_apply (void)
         | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_D_SOURCE, 0x0) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_D_ALPHA, 1) | XGU_MASK(NV097_SET_COMBINER_ALPHA_ICW_D_MAP, 0x0));
 }
 // clang-format on
+
+#if SDL_XGU_SHOW_FPS
+static uint64_t frame_start;
+static float frame_time;
+static int frame_time_index = 0;
+static float fps = 0.0f;
+
+// This calculation is a bit more complex than usual but because pbkit forces a vblank flip
+// we will often just get a capped FPS. This calculates the average frame rendering time without the
+// vblank wait and then calculate the maximum 'theoretical FPS' based on that.
+// This is not perfect but it gives a better idea of the actual rendering performance.
+static void calculate_fps(int stage)
+{
+    // Stage 0 initializes the frame start time
+    if (stage == 0) {
+        frame_start = SDL_GetTicksNS();
+        return;
+    }
+    // Stage 1 calculates the average frame time and FPS
+    else if (stage == 1) {
+        const int average_frame_count = 60;
+        uint64_t frame_end = SDL_GetTicksNS();
+        frame_time += (float)(frame_end - frame_start) / 1000.0f;
+        if (frame_time_index++ == average_frame_count - 1) {
+            frame_time /= 1000000.0f;
+            fps = (float)average_frame_count / frame_time;
+            frame_time_index = 0;
+        }
+        return;
+        // Stage 2 displays the FPS on the screen
+    } else if (stage == 2) {
+        char pb_text[16];
+        pb_erase_text_screen();
+        int len = SDL_snprintf(pb_text, sizeof(pb_text), "FPS: %.02f", fps);
+        pb_fill(20, 25, len * 10, 20, 0xFF000000);
+        pb_print(pb_text);
+        pb_draw_text_screen();
+        return;
+    }
+}
+#else
+static void calculate_fps(int stage)
+{
+    (void)stage;
+}
+#endif
 
 #endif // SDL_VIDEO_RENDER_XGU
