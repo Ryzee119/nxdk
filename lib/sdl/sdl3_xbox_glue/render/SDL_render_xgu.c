@@ -2,6 +2,7 @@
 
 #ifdef SDL_VIDEO_RENDER_XGU
 
+#include "swizzle.h"
 #include "xgu/xgux.h"
 #include <../src/render/SDL_sysrender.h>
 #include <SDL3/SDL_pixels.h>
@@ -115,7 +116,7 @@ static bool XBOX_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture, SDL
         }
     }
 
-    // If static target we swizzle it
+    // If static target we swizzle it because it has better performance is should not need updating often
     if (SDL_GetNumberProperty(create_props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, 0) == SDL_TEXTUREACCESS_STATIC) {
         xgu_texture->swizzled = 1;
     }
@@ -126,15 +127,15 @@ static bool XBOX_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture, SDL
         return SDL_SetError("[nxdk renderer] Unsupported texture format (%s)", SDL_GetPixelFormatName(texture->format));
     }
 
-    xgu_texture->tex_height = texture->h;
     xgu_texture->tex_width = texture->w;
+    xgu_texture->tex_height = texture->h;
 
     if (xgu_texture->swizzled) {
-        xgu_texture->data_height = npot2pot(texture->h);
         xgu_texture->data_width = npot2pot(texture->w);
+        xgu_texture->data_height = npot2pot(texture->h);
     } else {
-        xgu_texture->data_height = texture->h;
         xgu_texture->data_width = texture->w;
+        xgu_texture->data_height = texture->h;
     }
 
     const size_t allocation_size = xgu_texture->data_height * xgu_texture->data_width * xgu_texture->bytes_per_pixel;
@@ -184,20 +185,26 @@ static void XBOX_UnlockTexture(SDL_Renderer *renderer, SDL_Texture *texture)
 static bool XBOX_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
                                const SDL_Rect *rect, const void *pixels, int pitch)
 {
-    XGU_MAYBE_UNUSED xgu_texture_t *xgu_texture = (xgu_texture_t *)texture->internal;
-    const uint8_t *src = pixels;
-    uint8_t *dst;
-    int dpitch;
+    XGU_MAYBE_UNUSED xgu_render_data_t *render_data = (xgu_render_data_t *)renderer->internal;
+    xgu_texture_t *xgu_texture = (xgu_texture_t *)texture->internal;
+    const Uint8 *src;
+    Uint8 *dst;
+    int row, length, dpitch;
+    src = pixels;
 
     XBOX_LockTexture(renderer, texture, rect, (void **)&dst, &dpitch);
-    const int length = rect->w * xgu_texture->bytes_per_pixel;
-    if (length == pitch && length == dpitch) {
-        SDL_memcpy(dst, src, length * rect->h);
+    length = rect->w * SDL_BYTESPERPIXEL(texture->format);
+    if (xgu_texture->swizzled) {
+        swizzle_rect(src, rect->w, rect->h, dst, length, SDL_BYTESPERPIXEL(texture->format));
     } else {
-        for (int row = 0; row < rect->h; ++row) {
-            SDL_memcpy(dst, src, length);
-            src += pitch;
-            dst += dpitch;
+        if (length == pitch && length == dpitch) {
+            SDL_memcpy(dst, src, length * rect->h);
+        } else {
+            for (row = 0; row < rect->h; ++row) {
+                SDL_memcpy(dst, src, length);
+                src += pitch;
+                dst += dpitch;
+            }
         }
     }
 
@@ -233,8 +240,8 @@ static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
         dma_channel = DMA_CHANNEL_3D_3;
         address = (uint32_t)xgu_texture->data_physical_address;
         pitch = xgu_texture->data_width * xgu_texture->bytes_per_pixel;
-        clip_width = xgu_texture->tex_width + 1;
-        clip_height = xgu_texture->tex_height + 1;
+        clip_width = xgu_texture->tex_width;
+        clip_height = xgu_texture->tex_height;
         format = XGU_MASK(NV097_SET_SURFACE_FORMAT_COLOR, surface_format);
     }
 
@@ -347,8 +354,8 @@ static bool XBOX_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd, S
 
             // Swizzled texture coords must be normalised, otherwise we stick with unnormalised
             if (xgu_texture->swizzled) {
-                xgu_vertex->tex[0] = vertex_uv[0] * (float)(xgu_texture->tex_width - 1) / xgu_texture->data_width;
-                xgu_vertex->tex[1] = vertex_uv[1] * (float)(xgu_texture->tex_height - 1) / xgu_texture->data_height;
+                xgu_vertex->tex[0] = vertex_uv[0] * (float)(xgu_texture->tex_width - 1) / (float)xgu_texture->data_width;
+                xgu_vertex->tex[1] = vertex_uv[1] * (float)(xgu_texture->tex_height - 1) / (float)xgu_texture->data_height;
             } else {
                 xgu_vertex->tex[0] = vertex_uv[0] * xgu_texture->tex_width - 1;
                 xgu_vertex->tex[1] = vertex_uv[1] * xgu_texture->tex_height - 1;
@@ -451,28 +458,9 @@ static bool XBOX_RenderClear(SDL_Renderer *renderer, SDL_RenderCommand *cmd)
     const uint32_t color32 = ((uint32_t)(color.r * 255.0f) << 16) |
                              ((uint32_t)(color.g * 255.0f) << 8) |
                              ((uint32_t)(color.b * 255.0f) << 0) |
-                             ((uint32_t)(1.0f * 255.0f) << 24);
+                             ((uint32_t)(color.a * 255.0f) << 24);
 
-    SDL_Rect scissor_clipped_rect;
-    if (render_data->active_render_target) {
-        SDL_Rect target_rect = {
-            .x = 0,
-            .y = 0,
-            .w = render_data->active_render_target->tex_width,
-            .h = render_data->active_render_target->tex_height
-        };
-        SDL_GetRectIntersection(&render_data->clip_rect, &target_rect, &scissor_clipped_rect);
-    } else {
-        SDL_GetRectIntersection(&render_data->clip_rect, &render_data->viewport, &scissor_clipped_rect);
-    }
-
-    p = pb_begin();
-    p = xgu_set_clear_rect_vertical(p, scissor_clipped_rect.y, scissor_clipped_rect.h);
-    p = xgu_set_clear_rect_horizontal(p, scissor_clipped_rect.x, scissor_clipped_rect.w);
-    p = xgu_set_color_clear_value(p, color32);
-    p = xgu_clear_surface(p, XGU_CLEAR_COLOR);
-    pb_end(p);
-
+    pb_fill(0, 0, pb_back_buffer_width(), pb_back_buffer_height(), color32);
     return true;
 }
 
