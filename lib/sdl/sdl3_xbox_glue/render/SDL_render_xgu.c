@@ -202,10 +202,10 @@ static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
         dma_channel = DMA_CHANNEL_PIXEL_RENDERER;
         address = 0;
         pitch = pb_back_buffer_pitch();
-        width = pb_back_buffer_width();
-        height = pb_back_buffer_height();
-        clip_width = width;
-        clip_height = height;
+        width = 0;
+        height = 0;
+        clip_width = pb_back_buffer_width();
+        clip_height = pb_back_buffer_height();
         format = XGU_MASK(NV097_SET_SURFACE_FORMAT_COLOR, pb_ColorFmt);
     } else {
         xgu_texture = (xgu_texture_t *)texture->internal;
@@ -217,32 +217,48 @@ static bool XBOX_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
 
         dma_channel = DMA_CHANNEL_3D_3;
         address = (uint32_t)xgu_texture->data_physical_address;
-        pitch = xgu_texture->data_width * xgu_texture->bytes_per_pixel; // The full NPOT width
-        width = xgu_texture->data_width;
-        height = xgu_texture->data_height;
-        clip_width = xgu_texture->tex_width;
-        clip_height = xgu_texture->tex_height;
+        pitch = xgu_texture->data_width * xgu_texture->bytes_per_pixel;
+        width = __builtin_ctz(xgu_texture->data_width);
+        height = __builtin_ctz(xgu_texture->data_height);
+        clip_width = xgu_texture->tex_width + 1;
+        clip_height = xgu_texture->tex_height + 1;
         format = XGU_MASK(NV097_SET_SURFACE_FORMAT_COLOR, surface_format);
     }
 
     format |= XGU_MASK(NV097_SET_SURFACE_FORMAT_ZETA, NV097_SET_SURFACE_FORMAT_ZETA_Z24S8) |
-              XGU_MASK(NV097_SET_SURFACE_FORMAT_TYPE, NV097_SET_SURFACE_FORMAT_TYPE_PITCH) |
-              XGU_MASK(NV097_SET_SURFACE_FORMAT_WIDTH, __builtin_ctz(width)) |
-              XGU_MASK(NV097_SET_SURFACE_FORMAT_HEIGHT, __builtin_ctz(height));
+              XGU_MASK(NV097_SET_SURFACE_FORMAT_TYPE, NV097_SET_SURFACE_FORMAT_TYPE_PITCH);
 
-    // We are rendering to the depth buffer still so use back buffer width
+    // I think we only need these for swizzled types
+    // XGU_MASK(NV097_SET_SURFACE_FORMAT_WIDTH, width) |
+    // XGU_MASK(NV097_SET_SURFACE_FORMAT_HEIGHT, height);
+
+    // We are not using the depth buffer so it is unchanged. Stick top the back buffer width.
     // Z24S8 format has 4 bytes per pixel for the zeta buffer
     zpitch = pb_back_buffer_width() * 4;
 
     p = pb_begin();
-    p = pb_push1(p, NV097_SET_CONTEXT_DMA_COLOR, dma_channel);
-    p = pb_push1(p, NV097_SET_SURFACE_COLOR_OFFSET, address);
-    p = pb_push1(p, NV097_SET_SURFACE_PITCH, XGU_MASK(NV097_SET_SURFACE_PITCH_COLOR, pitch) | XGU_MASK(NV097_SET_SURFACE_PITCH_ZETA, zpitch));
-    p = pb_push1(p, NV097_NO_OPERATION, 0);
+
     p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
+    p = pb_push1(p, NV097_SET_CONTEXT_DMA_COLOR, dma_channel);
+
+    p = pb_push1(p, NV097_SET_SURFACE_PITCH,
+                 XGU_MASK(NV097_SET_SURFACE_PITCH_COLOR, pitch) |
+                     XGU_MASK(NV097_SET_SURFACE_PITCH_ZETA, zpitch));
+    p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
+
+    p = pb_push1(p, NV097_SET_SURFACE_COLOR_OFFSET, address);
+    p = pb_push1(p, NV097_WAIT_FOR_IDLE, 0);
+
+    p = pb_push1(p, NV097_SET_SURFACE_CLIP_HORIZONTAL,
+                 XGU_MASK(NV097_SET_SURFACE_CLIP_HORIZONTAL_WIDTH, clip_width) |
+                     XGU_MASK(NV097_SET_SURFACE_CLIP_HORIZONTAL_X, 0));
+
+    p = pb_push1(p, NV097_SET_SURFACE_CLIP_VERTICAL,
+                 XGU_MASK(NV097_SET_SURFACE_CLIP_VERTICAL_HEIGHT, clip_height) |
+                     XGU_MASK(NV097_SET_SURFACE_CLIP_VERTICAL_Y, 0));
+
     p = pb_push1(p, NV097_SET_SURFACE_FORMAT, format);
-    p = pb_push1(p, NV097_SET_SURFACE_CLIP_HORIZONTAL, XGU_MASK(NV097_SET_SURFACE_CLIP_HORIZONTAL_WIDTH, clip_width));
-    p = pb_push1(p, NV097_SET_SURFACE_CLIP_VERTICAL, XGU_MASK(NV097_SET_SURFACE_CLIP_VERTICAL_HEIGHT, clip_height));
+
     pb_end(p);
 
     render_data->active_render_target = xgu_texture;
@@ -287,8 +303,6 @@ static bool XBOX_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd, S
 
     for (int i = 0; i < count; i++) {
         int j;
-        //if (i == 3)
-       //     break;
         if (size_indices == 4) {
             j = ((const uint32_t *)indices)[i];
         } else if (size_indices == 2) {
@@ -298,7 +312,7 @@ static bool XBOX_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd, S
         } else {
             j = i;
         }
-       // DbgPrint("size_indices %d count %d\n", size_indices, count);
+
         const float *vertex_pos = (float *)((char *)xy + j * xy_stride);
         const SDL_FColor *vertex_color = (SDL_FColor *)((intptr_t)color + j * color_stride);
 
@@ -314,8 +328,6 @@ static bool XBOX_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd, S
             xgu_vertex->pos[0] = vertex_pos[0] * scale_x;
             xgu_vertex->pos[1] = vertex_pos[1] * scale_y;
             xgu_vertex->color[0] = color_value;
-
-            DbgPrint("Draw at %d %d\n", (int)xgu_vertex->pos[0], (int)xgu_vertex->pos[1]);
 
             const xgu_texture_t *xgu_texture = (xgu_texture_t *)texture->internal;
             const float *vertex_uv = (float *)((char *)uv + j * uv_stride);
@@ -376,7 +388,6 @@ static bool XBOX_RenderSetClipRect(SDL_Renderer *renderer, SDL_RenderCommand *cm
     if (cmd->data.cliprect.enabled == false) {
         const SDL_Rect no_clip = { 0, 0, pb_back_buffer_width() - 1, pb_back_buffer_height() - 1 };
         *clip_rect = no_clip;
-        return true;
     }
 
     // If the new clip rect is the same as the current one, no need to update
@@ -419,17 +430,27 @@ static bool XBOX_RenderClear(SDL_Renderer *renderer, SDL_RenderCommand *cmd)
     const uint32_t color32 = ((uint32_t)(color.r * 255.0f) << 16) |
                              ((uint32_t)(color.g * 255.0f) << 8) |
                              ((uint32_t)(color.b * 255.0f) << 0) |
-                             ((uint32_t)(color.a * 255.0f) << 24);
+                             ((uint32_t)(1.0f * 255.0f) << 24);
 
+    SDL_Rect scissor_clipped_rect;
     if (render_data->active_render_target) {
-        pb_fill(0, 0, render_data->active_render_target->tex_width,
-                render_data->active_render_target->tex_height, color32);
+        SDL_Rect target_rect = {
+            .x = 0,
+            .y = 0,
+            .w = render_data->active_render_target->tex_width,
+            .h = render_data->active_render_target->tex_height
+        };
+        SDL_GetRectIntersection(&render_data->clip_rect, &target_rect, &scissor_clipped_rect);
     } else {
-        p = pb_begin();
-        p = xgu_set_color_clear_value(p, color32);
-        p = xgu_clear_surface(p, XGU_CLEAR_COLOR);
-        pb_end(p);
+        SDL_GetRectIntersection(&render_data->clip_rect, &render_data->viewport, &scissor_clipped_rect);
     }
+
+    p = pb_begin();
+    p = xgu_set_clear_rect_vertical(p, scissor_clipped_rect.y, scissor_clipped_rect.h);
+    p = xgu_set_clear_rect_horizontal(p, scissor_clipped_rect.x, scissor_clipped_rect.w);
+    p = xgu_set_color_clear_value(p, color32);
+    p = xgu_clear_surface(p, XGU_CLEAR_COLOR);
+    pb_end(p);
 
     return true;
 }
@@ -624,6 +645,9 @@ static bool XBOX_RenderPresent(SDL_Renderer *renderer)
 {
     XGU_MAYBE_UNUSED xgu_render_data_t *render_data = (xgu_render_data_t *)renderer->internal;
 
+    // Set the screen white
+    // pb_fill(0, 0, pb_back_buffer_width() - 1, pb_back_buffer_height() - 1, 0xFF00FFFF);
+
     while (pb_busy()) {
         Sleep(0);
     }
@@ -691,6 +715,7 @@ static bool XBOX_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, SDL_
 
     pb_init();
     pb_show_front_screen();
+    pb_target_back_buffer();
 
     p = pb_begin();
     combiner_init();
@@ -763,7 +788,7 @@ static bool XBOX_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, SDL_
     arena_init(renderer);
 
     // Initialize the default clip rect and viewport
-    render_data->viewport = (SDL_Rect){ 0, 0, pb_back_buffer_width(), pb_back_buffer_height() };
+    render_data->viewport = (SDL_Rect){ 0, 0, pb_back_buffer_width() - 1, pb_back_buffer_height() - 1 };
     render_data->clip_rect = render_data->viewport;
 
     // Point the frame index to what would be the older frame which is the one just after the one we are rendering.
