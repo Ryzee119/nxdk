@@ -193,10 +193,12 @@ static bool XBOX_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
     src = pixels;
 
     XBOX_LockTexture(renderer, texture, rect, (void **)&dst, &dpitch);
+
     length = rect->w * SDL_BYTESPERPIXEL(texture->format);
     if (xgu_texture->swizzled) {
         swizzle_rect(src, rect->w, rect->h, dst, length, SDL_BYTESPERPIXEL(texture->format));
     } else {
+        // If the pitch matches we can do a single memcpy, otherwise we need to copy each row separately
         if (length == pitch && length == dpitch) {
             SDL_memcpy(dst, src, length * rect->h);
         } else {
