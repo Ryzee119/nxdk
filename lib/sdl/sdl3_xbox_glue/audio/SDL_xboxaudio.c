@@ -5,7 +5,7 @@
 #include <xboxkrnl/xboxkrnl.h>
 
 #ifndef SDL_XBOXAUDIO_BUFFER_COUNT
-#define SDL_XBOXAUDIO_BUFFER_COUNT 3
+#define SDL_XBOXAUDIO_BUFFER_COUNT 2
 #endif
 
 #if (SDL_XBOXAUDIO_BUFFER_COUNT < 2)
@@ -22,6 +22,7 @@ typedef struct SDL_PrivateAudioData
 
 static void xbox_audio_callback(void *pac97device, void *data)
 {
+    (void)pac97device;
     struct SDL_PrivateAudioData *audio_data = (struct SDL_PrivateAudioData *)data;
     KeReleaseSemaphore(&audio_data->playsem, IO_SOUND_INCREMENT, 1, FALSE);
     return;
@@ -97,6 +98,7 @@ static void XBOXAUDIO_CloseDevice(SDL_AudioDevice *device)
 static Uint8 *XBOXAUDIO_GetDeviceBuf(SDL_AudioDevice *device, int *buffer_size)
 {
     struct SDL_PrivateAudioData *audio_data = (struct SDL_PrivateAudioData *)device->hidden;
+    *buffer_size = audio_data->buffer_size;
     return (Uint8 *)audio_data->buffers[audio_data->next_buffer];
 }
 
@@ -110,6 +112,9 @@ static bool XBOXAUDIO_PlayDevice(SDL_AudioDevice *device, const Uint8 *buffer, i
 
 static int XBOXAUDIO_RecordDevice(SDL_AudioDevice *device, void *buffer, int buflen)
 {
+    (void)device;
+    (void)buffer;
+    (void)buflen;
     return -1;
 }
 

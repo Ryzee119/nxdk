@@ -8,6 +8,8 @@
 
 void SDL_GetSystemTimeLocalePreferences(SDL_DateFormat *df, SDL_TimeFormat *tf)
 {
+    (void)df;
+    (void)tf;
     // SDL defaults to ISO 8061 date format already. This will do.
     return;
 }

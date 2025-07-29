@@ -3,8 +3,8 @@
 #if defined(SDL_FILESYSTEM_NXDK) && !defined(SDL_FILESYSTEM_DISABLED)
 
 // The letter is arbritrary. Try keep away from stock letters, default to S for SDL
-#ifndef SDL_BASE_PATH_LETTER_NXDK
-#define SDL_BASE_PATH_LETTER_NXDK 'S'
+#ifndef SDL_NXDK_BASE_PATH_LETTER
+#define SDL_NXDK_BASE_PATH_LETTER 'D'
 #endif
 
 #include <../src/filesystem/SDL_sysfilesystem.h>
@@ -13,43 +13,44 @@
 #include <nxdk/path.h>
 #include <windows.h>
 
-static bool base_mounted = false;
-
-// As per SDL docs, the returned path is guaranteed to end with a path separator ('\' on Windows, '/' on most other platforms).
+// As per SDL docs, the returned paths is guaranteed to end with a path separator ('\' on Windows, '/' on most other platforms).
 
 char *SDL_SYS_GetBasePath(void)
 {
-    if (base_mounted == false) {
-        char targetPath[MAX_PATH];
-        nxGetCurrentXbeNtPath(targetPath);
-        *(strrchr(targetPath, '\\') + 1) = '\0';
-        nxMountDrive(SDL_BASE_PATH_LETTER_NXDK, targetPath);
-        base_mounted = true;
+    if (nxIsDriveMounted(SDL_NXDK_BASE_PATH_LETTER) == false) {
+        char mount_path[MAX_PATH];
+        nxGetCurrentXbeNtPath(mount_path);
+
+        // The path includes the xbe name, so we need to remove it.
+        char *end = strrchr(mount_path, '\\');
+        if (end == NULL) {
+            SDL_SetError("Failed to get base path");
+            return NULL;
+        }
+        *(end + 1) = '\0';
+
+        nxMountDrive(SDL_NXDK_BASE_PATH_LETTER, mount_path);
     }
 
-    char base_path[] = { SDL_BASE_PATH_LETTER_NXDK, ':', '\\', '\0' };
+    const char base_path[] = { SDL_NXDK_BASE_PATH_LETTER, ':', '\\', '\0' };
     return SDL_strdup(base_path);
 }
 
 char *SDL_SYS_GetPrefPath(const char *org, const char *app)
 {
-    if (nxIsDriveMounted('E') == false) {
-        nxMountDrive('E', "\\Device\\Harddisk0\\Partition1\\");
-    }
+    (void)org;
+    char path[MAX_PATH];
+    SDL_snprintf(path, sizeof(path), "E:\\UDATA\\%s\\", app);
 
-    // Create UDATA directory if it doesn't exist
     CreateDirectoryA("E:\\UDATA", NULL);
+    CreateDirectoryA(path, NULL);
 
-    return SDL_strdup("E:\\UDATA\\");
+    return SDL_strdup(path);
 }
 
 char *SDL_SYS_GetUserFolder(SDL_Folder folder)
 {
-    if (nxIsDriveMounted('E') == false) {
-        nxMountDrive('E', "\\Device\\Harddisk0\\Partition1\\");
-    }
-
-    // Create UDATA directory if it doesn't exist
+    (void)folder;
     CreateDirectoryA("E:\\UDATA", NULL);
 
     return SDL_strdup("E:\\UDATA\\");

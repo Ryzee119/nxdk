@@ -8,6 +8,9 @@ static SDL_Window *xbox_window = NULL;
 
 static bool XBOX_CreateWindow(SDL_VideoDevice *_this, SDL_Window *window, SDL_PropertiesID create_props)
 {
+    (void)_this;
+    (void)create_props;
+
     if (xbox_window) {
         SDL_SetError("Xbox only supports one window");
         return false;
@@ -60,6 +63,7 @@ static void XBOX_DeleteDevice(SDL_VideoDevice *device)
 
 static void XBOX_PumpEvents(SDL_VideoDevice *device)
 {
+    (void)device;
     // Do nothing
 }
 
@@ -85,6 +89,7 @@ static inline SDL_PixelFormat pixelFormatSelector(int bpp)
 
 static bool SDL_XBOX_CreateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *window, SDL_PixelFormat *format, void **pixels, int *pitch)
 {
+    (void)_this;
     SDL_Surface *surface;
     const SDL_PixelFormat surface_format = pixelFormatSelector(XVideoGetMode().bpp);
     int w, h;
@@ -106,7 +111,7 @@ static bool SDL_XBOX_CreateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window 
 
 bool SDL_XBOX_UpdateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *window, const SDL_Rect *rects, int numrects)
 {
-    static int frame_number;
+    (void)_this;
     SDL_Surface *surface;
 
     // return true;  // No need to update framebuffer in this backend, we use the GPU framebuffer directly.
@@ -145,9 +150,6 @@ bool SDL_XBOX_UpdateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *window
                           dst_format, &dst8[rect->y * dst_pitch + rect->x * dst_bytes_per_pixel], dst_pitch);
     }
 
-    // Copy SDL window surface to GPU framebuffer
-    // SDL_ConvertPixels(width, height, src_format, src, src_pitch, dst_format, dst, dst_pitch);
-
     // Writeback WC buffers
     XVideoFlushFB();
 
@@ -156,11 +158,13 @@ bool SDL_XBOX_UpdateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *window
 
 static void SDL_XBOX_DestroyWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *window)
 {
+    (void)_this;
     SDL_ClearProperty(SDL_GetWindowProperties(window), XBOX_SURFACE);
 }
 
 static bool XBOX_VideoInit(SDL_VideoDevice *_this)
 {
+    (void)_this;
     SDL_DisplayMode mode;
     VIDEO_MODE xmode;
     void *p = NULL;
@@ -190,12 +194,16 @@ static bool XBOX_VideoInit(SDL_VideoDevice *_this)
 
 static bool XBOX_SetDisplayMode(SDL_VideoDevice *_this, SDL_VideoDisplay *display, SDL_DisplayMode *mode)
 {
+    (void)_this;
+    (void)display;
+    (void)mode;
     DbgPrint("XBOX_SetDisplayMode: %dx%d@%dHz\n", mode->w, mode->h, mode->refresh_rate);
     return 0;
 }
 
 static void XBOX_VideoQuit(SDL_VideoDevice *_this)
 {
+    (void)_this;
 }
 
 static SDL_VideoDevice *XBOX_CreateDevice(void)
