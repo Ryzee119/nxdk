@@ -2291,7 +2291,7 @@ int pb_init(void)
     pb_set_gamma_ramp(&gammaRamp);
 
     pb_BackBufferNxt=0;
-    for(i=0;i<5;i++) pb_BackBufferbReady[i]=0;
+    for(i=0;i<3;i++) pb_BackBufferbReady[i]=0;
 
     pb_Put=NULL;
 
