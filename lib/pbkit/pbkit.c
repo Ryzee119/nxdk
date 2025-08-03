@@ -2315,7 +2315,6 @@ int pb_init(void)
 
     pb_Tail=pb_Head+pb_Size/4;
 
-    pb_Put=pb_Head;
 
     pb_BackBufferNxt=0;     //increments when we finish drawing a frame
     pb_BackBufferbReady[0]=0;
@@ -2753,6 +2752,7 @@ int pb_init(void)
     pb_bind_channel(&sGrObject16);
     pb_bind_channel(&sGrObject17);
 
+    pb_Put=pb_Head;
     pb_DmaUserAddr=(DWORD *)UserAddr;   //VIDEOBASE+NV_USER+(0<<16)
 
     pb_PushBase=(DWORD)pb_Head;
