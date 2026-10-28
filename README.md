@@ -65,7 +65,7 @@ Code Overview
 * `lib/pdclib` - Xbox port of PDCLib, a CC0-licensed C standard library.
 * `lib/pbkit` - A low level library for interfacing with the Xbox GPU.
 * `lib/sdl` - Xbox ports of SDL2 and SDL_ttf.
-* `lib/usb` - USB support from OpenXDK. Hacked together parts of an old Linux OHCI stack.
+* `lib/usb` - USB host stack based on [TinyUSB](https://github.com/hathach/tinyusb) with an Xbox OHCI host controller port and an OSAL built on the Xbox kernel. Also provides a WinUSB compatible API (`lib/usb/winusb`, see `samples/winusb`).
 * `lib/winapi` - Xbox specific implementations of common useful WinAPI-functions.
 * `lib/xboxkrnl` - Header and import library for interfacing with the Xbox kernel.
 * `lib/xboxrt` - Miscellaneous functionality for debugging etc.
